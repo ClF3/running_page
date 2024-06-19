@@ -20,3 +20,19 @@ _site/
 
 config.yaml
 .venv/
+
+# Garmin secrets
+secret.txt
+
+# Database file
+run_page/data.db
+
+# Created from TCX and GPX
+imported.json
+src/static/activities.json
+
+# SVGs
+assets
+!assets/index.tsx
+!assets/start.svg
+!assets/end.svg
