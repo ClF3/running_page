@@ -23,6 +23,10 @@ config.yaml
 
 # Garmin secrets
 secret.txt
+secret_string.txt
+
+# Logs
+cronlog.log
 
 # Database file
 run_page/data.db
