@@ -220,6 +220,7 @@ class Track:
             self.start_latlng = start_point(*polyline_container[0])
         except:
             pass
+        
         self.start_time_local, self.end_time_local = parse_datetime_to_local(
             self.start_time, self.end_time, polyline_container[0]
         )
