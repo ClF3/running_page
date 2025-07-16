@@ -1,18 +1,16 @@
 @media only screen and (max-width: 800px) {
-
   /* 当屏幕宽度小于 800px 时 */
   .runTable th:nth-child(3),
-  .runTable td:nth-child(3)  {
+  .runTable td:nth-child(3) {
     display: none;
     /* 隐藏第3列 */
   }
 }
 
 @media only screen and (max-width: 700px) {
-
   /* 当屏幕宽度小于 700px 时 */
   .runTable th:nth-child(5),
-  .runTable td:nth-child(5)  {
+  .runTable td:nth-child(5) {
     display: none;
     /* 隐藏第5列 */
   }
@@ -20,18 +18,37 @@
 
 .runTable {
   width: 100%;
-  font-variant: tabular-nums;
   margin: 2rem 0 5rem 0;
-  color: rgb(204, 204, 204);
-  background-color: rgb(26, 26, 26);
-
+  color: var(--color-run-table-thead);
+  background-color: var(--color-background);
+  font-family: var(--font-mono);
   :is(thead) {
-    color: rgb(204, 204, 204);
+    color: var(--color-run-table-thead);
     text-align: right;
 
     :is(th) {
       padding: 0.5rem;
     }
+  }
+  :is(th, td):nth-child(1) {
+    width: 137px;
+    text-align: left;
+  }
+
+  :is(th, td):nth-child(2) {
+    width: 91px;
+  }
+
+  :is(th, td):nth-child(3) {
+    width: 112px;
+  }
+
+  :is(th, td):nth-child(4) {
+    width: 60px;
+  }
+
+  :is(th, td):nth-child(5) {
+    width: 100px;
   }
 }
 
@@ -41,19 +58,15 @@
     padding: 0.5rem;
     border: 0;
     text-align: right;
-
-    &:first-child {
-      text-align: left;
-    }
   }
 
   &:hover {
-    background-color: lighten(rgb(26, 26, 26), 3%);
+    background-color: var(--color-run-row-hover-background);
   }
 }
 
 .selected {
-  color: rgb(224, 237, 94);
+  color: var(--color-primary);
 }
 
 .tableContainer {
@@ -62,5 +75,5 @@
 }
 
 .runDate {
-  color: rgb(204, 204, 204);
+  color: var(--color-run-date);
 }
