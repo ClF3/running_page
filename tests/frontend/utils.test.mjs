@@ -127,8 +127,17 @@ test('title generation falls back to distance and time-of-day labels', () => {
 test('geo utilities decode routes and produce route feature collections', () => {
   const outdoor = run();
   const indoor = run({ run_id: 2, subtype: 'indoor' });
+  const indoorWithoutRoute = run({
+    run_id: 3,
+    subtype: 'indoor',
+    summary_polyline: null,
+  });
   const pathForRun = geoUtils.pathForRun(outdoor);
-  const geoJson = geoUtils.geoJsonForRuns([outdoor, indoor]);
+  const geoJson = geoUtils.geoJsonForRuns([
+    outdoor,
+    indoor,
+    indoorWithoutRoute,
+  ]);
 
   assert.deepEqual(pathForRun[0], [-120.2, 38.5]);
   assert.equal(geoJson.type, 'FeatureCollection');
@@ -140,6 +149,14 @@ test('geo utilities decode routes and produce route feature collections', () => 
   assert.equal(typeof bounds.longitude, 'number');
   assert.equal(typeof bounds.latitude, 'number');
   assert.equal(bounds.zoom, 11.5);
+
+  const emptyGeoJson = geoUtils.geoJsonForRuns([indoorWithoutRoute]);
+  assert.equal(emptyGeoJson.features.length, 0);
+  assert.deepEqual(geoUtils.getBoundsForGeoData(emptyGeoJson), {
+    longitude: 20,
+    latitude: 20,
+    zoom: 3,
+  });
 });
 
 const jsonResponse = (body) => ({

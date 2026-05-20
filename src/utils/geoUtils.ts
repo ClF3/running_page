@@ -92,10 +92,14 @@ export const geoJsonForRuns = (
   runs: Activity[]
 ): FeatureCollection<LineString> => ({
   type: 'FeatureCollection',
-  features: runs.map((run) => {
+  features: runs.flatMap((run) => {
     const points = pathForRun(run);
+    if (points.length < 2) {
+      return [];
+    }
+
     const color = colorForRun(run);
-    return {
+    const feature: Feature<LineString> = {
       type: 'Feature',
       properties: {
         color: color,
@@ -106,6 +110,7 @@ export const geoJsonForRuns = (
         coordinates: points,
       },
     };
+    return [feature];
   }),
 });
 
