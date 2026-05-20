@@ -1,0 +1,171 @@
+.chart {
+  --weekly-chart-axis: color-mix(
+    in srgb,
+    var(--color-run-table-thead) 70%,
+    transparent
+  );
+  --weekly-chart-bar: #0ea5e9;
+  --weekly-chart-bar-hover: #38bdf8;
+  --weekly-chart-bar-selected: var(--color-primary);
+  --weekly-chart-grid: color-mix(
+    in srgb,
+    var(--color-run-row-hover-background) 72%,
+    transparent
+  );
+
+  width: 100%;
+  margin: 1.75rem 0 0.25rem;
+  color: var(--color-run-table-thead);
+  font-family: var(--font-mono);
+}
+
+:global([data-theme='dark']) .chart {
+  --weekly-chart-axis: color-mix(
+    in srgb,
+    var(--color-run-table-thead) 72%,
+    transparent
+  );
+  --weekly-chart-bar: #4dd2ff;
+  --weekly-chart-bar-hover: #8be5ff;
+  --weekly-chart-bar-selected: var(--color-primary);
+}
+
+:global([data-theme='light']) .chart {
+  --weekly-chart-axis: color-mix(
+    in srgb,
+    var(--color-run-table-thead) 76%,
+    transparent
+  );
+  --weekly-chart-bar: #0ea5e9;
+  --weekly-chart-bar-hover: #0284c7;
+  --weekly-chart-bar-selected: var(--color-primary);
+}
+
+.summary {
+  --summary-label-width: 8rem;
+  --summary-metric-width: 6.25rem;
+  --summary-gap: clamp(0.28rem, 0.8vw, 0.48rem);
+
+  display: grid;
+  grid-template-columns:
+    var(--summary-label-width) 1px var(--summary-metric-width) 1px
+    var(--summary-metric-width) 1px var(--summary-metric-width) 1px
+    var(--summary-metric-width);
+  column-gap: var(--summary-gap);
+  align-items: baseline;
+  justify-content: center;
+  min-height: 1.75rem;
+  margin-bottom: 0.35rem;
+  font-size: clamp(0.78rem, 1.8vw, 1rem);
+  line-height: 1.4;
+}
+
+.summaryItem {
+  display: block;
+  width: 100%;
+  overflow: hidden;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.period {
+  color: var(--color-run-date);
+  font-weight: 600;
+}
+
+.metric {
+  color: var(--color-run-table-thead);
+  font-weight: 700;
+}
+
+.divider {
+  width: 1px;
+  height: 1em;
+  background: var(--color-hr-primary);
+}
+
+.svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+
+.axisLabel {
+  fill: var(--weekly-chart-axis);
+  font-size: 11px;
+  font-weight: 600;
+  text-anchor: end;
+}
+
+.monthLabel {
+  fill: var(--color-run-table-thead);
+  font-size: 12px;
+  font-weight: 600;
+  text-anchor: middle;
+}
+
+.yearLabel {
+  fill: var(--weekly-chart-axis);
+  font-size: 13px;
+  font-weight: 600;
+  text-anchor: middle;
+}
+
+.axisLine {
+  stroke: var(--weekly-chart-axis);
+  stroke-width: 1;
+}
+
+.gridLine {
+  stroke: var(--weekly-chart-grid);
+  stroke-width: 1;
+}
+
+.week {
+  outline: none;
+}
+
+.hitArea {
+  fill: transparent;
+}
+
+.selectable {
+  cursor: pointer;
+}
+
+.bar {
+  fill: var(--weekly-chart-bar);
+  shape-rendering: crispEdges;
+  transition:
+    fill 0.15s ease,
+    opacity 0.15s ease;
+}
+
+.selectable:hover .bar,
+.selectable:focus-visible .bar {
+  fill: var(--weekly-chart-bar-hover);
+}
+
+.selected .bar,
+.selected:hover .bar,
+.selected:focus-visible .bar {
+  fill: var(--weekly-chart-bar-selected);
+}
+
+@media only screen and (max-width: 768px) {
+  .chart {
+    margin-top: 1.35rem;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .svg {
+    min-width: 640px;
+  }
+
+  .summary {
+    min-width: 640px;
+  }
+}

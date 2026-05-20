@@ -13,6 +13,7 @@ import LocationStat from '@/components/LocationStat';
 import RunMap from '@/components/RunMap';
 import RunTable from '@/components/RunTable';
 import SVGStat from '@/components/SVGStat';
+import WeeklyRunChart from '@/components/WeeklyRunChart';
 import YearsStat from '@/components/YearsStat';
 import useActivities from '@/hooks/useActivities';
 import getSiteMetadata from '@/hooks/useSiteMetadata';
@@ -35,6 +36,7 @@ import {
   type IViewState,
 } from '@/utils/geoUtils';
 import { useTheme, useThemeChangeCounter } from '@/hooks/useTheme';
+import { getActivityWeekKey } from '@/utils/weeklyRuns';
 
 const HASH_RUN_CHANGE_EVENT = 'running-page-hash-run-change';
 const SVG_CLICK_TARGET_SELECTOR =
@@ -117,6 +119,7 @@ const Index = () => {
     item: string;
     func: (_run: Activity, _value: string) => boolean;
   }>({ item: thisYear, func: filterYearRuns });
+  const [selectedWeekKey, setSelectedWeekKey] = useState<string | null>(null);
 
   // Track if we're showing a single run from URL hash
   const singleRunId = useRunHashId();
@@ -136,6 +139,13 @@ const Index = () => {
       sortDateFunc
     );
   }, [activities, currentFilter.item, currentFilter.func]);
+  const isYearView = year !== 'Total' && currentFilter.func === filterYearRuns;
+  const tableRuns = useMemo(() => {
+    if (!isYearView || !selectedWeekKey) {
+      return runs;
+    }
+    return runs.filter((run) => getActivityWeekKey(run) === selectedWeekKey);
+  }, [isYearView, runs, selectedWeekKey]);
 
   const geoData = useMemo(() => {
     void themeChangeCounter;
@@ -206,6 +216,7 @@ const Index = () => {
         setYear(thisYear);
         void loadAll();
       }
+      setSelectedWeekKey(null);
       setCurrentFilter({ item, func });
       setRunIndex(-1);
       setTitle(`${item} ${name} Running Heatmap`);
@@ -225,6 +236,7 @@ const Index = () => {
 
       // default year
       setYear(y);
+      setSelectedWeekKey(null);
 
       if ((viewState.zoom ?? 0) > 3 && bounds) {
         setViewState({
@@ -252,6 +264,12 @@ const Index = () => {
     },
     [changeByItem]
   );
+
+  const selectWeek = useCallback((weekKey: string | null) => {
+    setSelectedWeekKey(weekKey);
+    setRunIndex(-1);
+    clearRunHash();
+  }, []);
 
   const locateActivity = useCallback(
     (runIds: RunIds, options: LocateActivityOptions = {}) => {
@@ -481,12 +499,23 @@ const Index = () => {
         ) : year === 'Total' ? (
           <SVGStat />
         ) : (
-          <RunTable
-            runs={runs}
-            locateActivity={locateActivity}
-            runIndex={runIndex}
-            setRunIndex={setRunIndex}
-          />
+          <>
+            {isYearView && (
+              <WeeklyRunChart
+                runs={runs}
+                selectedWeekKey={selectedWeekKey}
+                onSelectWeek={selectWeek}
+                year={year}
+              />
+            )}
+            <RunTable
+              runs={tableRuns}
+              sourceRuns={runs}
+              locateActivity={locateActivity}
+              runIndex={runIndex}
+              setRunIndex={setRunIndex}
+            />
+          </>
         )}
       </div>
       {/* Enable Audiences in Vercel Analytics: https://vercel.com/docs/concepts/analytics/audiences/quickstart */}

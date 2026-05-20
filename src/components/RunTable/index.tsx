@@ -17,6 +17,7 @@ interface IRunTableProperties {
   locateActivity: (_runIds: RunIds) => void;
   runIndex: number;
   setRunIndex: (_index: number) => void;
+  sourceRuns?: Activity[];
 }
 
 type SortFunc = (_a: Activity, _b: Activity) => number;
@@ -32,6 +33,7 @@ const RunTable = ({
   locateActivity,
   runIndex,
   setRunIndex,
+  sourceRuns,
 }: IRunTableProperties) => {
   const [sortState, setSortState] = useState<SortState | null>(null);
 
@@ -84,8 +86,9 @@ const RunTable = ({
   }, [getSortFunction, runs, sortState]);
 
   const runIndexById = useMemo(
-    () => new Map(runs.map((run, index) => [run.run_id, index])),
-    [runs]
+    () =>
+      new Map((sourceRuns ?? runs).map((run, index) => [run.run_id, index])),
+    [runs, sourceRuns]
   );
 
   const handleClick = useCallback(
@@ -107,6 +110,15 @@ const RunTable = ({
   return (
     <div className={styles.tableContainer}>
       <table className={styles.runTable} cellSpacing="0" cellPadding="0">
+        <colgroup>
+          <col className={styles.titleColumn} />
+          <col className={styles.distanceColumn} />
+          {SHOW_ELEVATION_GAIN && <col className={styles.elevationColumn} />}
+          <col className={styles.paceColumn} />
+          <col className={styles.heartRateColumn} />
+          <col className={styles.timeColumn} />
+          <col className={styles.dateColumn} />
+        </colgroup>
         <thead>
           <tr>
             <th />

@@ -33,7 +33,7 @@
   color: var(--color-run-table-thead);
   background-color: var(--color-background);
   font-family: var(--font-mono);
-  table-layout: auto;
+  table-layout: fixed;
   :is(thead) {
     color: var(--color-run-table-thead);
 
@@ -62,7 +62,9 @@
     }
   }
   :is(th, td) {
+    overflow: hidden;
     white-space: nowrap;
+    text-overflow: ellipsis;
     text-align: center;
   }
 
@@ -73,6 +75,25 @@
   :is(th, td):last-child {
     text-align: right;
   }
+}
+
+.titleColumn {
+  width: auto;
+}
+
+.distanceColumn,
+.elevationColumn,
+.paceColumn,
+.timeColumn {
+  width: 6rem;
+}
+
+.heartRateColumn {
+  width: 5.25rem;
+}
+
+.dateColumn {
+  width: 13.75rem;
 }
 
 .runRow {

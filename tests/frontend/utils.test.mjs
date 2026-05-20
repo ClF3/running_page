@@ -33,6 +33,7 @@ let server;
 let utils;
 let geoUtils;
 let activitiesHook;
+let weeklyRuns;
 
 const run = (overrides = {}) => ({
   run_id: 1,
@@ -73,6 +74,7 @@ before(async () => {
   utils = await server.ssrLoadModule('/src/utils/utils.ts');
   geoUtils = await server.ssrLoadModule('/src/utils/geoUtils.ts');
   activitiesHook = await server.ssrLoadModule('/src/hooks/useActivities.ts');
+  weeklyRuns = await server.ssrLoadModule('/src/utils/weeklyRuns.ts');
 });
 
 after(async () => {
@@ -159,6 +161,46 @@ test('geo utilities decode routes and produce route feature collections', () => 
   });
 });
 
+test('weekly run summaries group activities by monday-starting weeks', () => {
+  const activities = [
+    run({
+      run_id: 1,
+      distance: 10_000,
+      moving_time: '1:00:00',
+      elevation_gain: 10,
+      start_date_local: '2026-01-01 08:00:00',
+    }),
+    run({
+      run_id: 2,
+      distance: 5_000,
+      moving_time: '0:30:00',
+      elevation_gain: 5,
+      start_date_local: '2026-01-04 08:00:00',
+    }),
+    run({
+      run_id: 3,
+      distance: 7_000,
+      moving_time: '0:42:00',
+      elevation_gain: 12,
+      start_date_local: '2026-01-05 08:00:00',
+    }),
+  ];
+
+  const weeks = weeklyRuns.createWeeklyRunSummaries(activities, '2026');
+  const activeWeeks = weeks.filter((week) => week.runCount > 0);
+
+  assert.equal(weeklyRuns.getActivityWeekKey(activities[0]), '2025-12-29');
+  assert.deepEqual(
+    activeWeeks.map((week) => week.runIds),
+    [[1, 2], [3]]
+  );
+  assert.equal(activeWeeks[0].distanceMeters, 15_000);
+  assert.equal(
+    weeklyRuns.formatDurationCompact(activeWeeks[0].movingSeconds),
+    '1h30m'
+  );
+});
+
 const jsonResponse = (body) => ({
   ok: true,
   status: 200,
@@ -234,7 +276,9 @@ test('activity loader fetches newest chunks first and merges loaded years', asyn
   assert.match(fetchCalls[0], /manifest\.json/);
   assert.match(fetchCalls[1], /year_2026\.json/);
   assert.deepEqual(
-    loader.getLoadedActivityData(loadedManifest).map((activity) => activity.run_id),
+    loader
+      .getLoadedActivityData(loadedManifest)
+      .map((activity) => activity.run_id),
     [3]
   );
 
@@ -249,7 +293,9 @@ test('activity loader fetches newest chunks first and merges loaded years', asyn
   await loader.prefetchRemainingActivityYears(loadedManifest);
 
   assert.deepEqual(
-    loader.getLoadedActivityData(loadedManifest).map((activity) => activity.run_id),
+    loader
+      .getLoadedActivityData(loadedManifest)
+      .map((activity) => activity.run_id),
     [1, 2, 3]
   );
   assert.equal(loader.findActivityYearForRunId(loadedManifest, 2), '2025');
