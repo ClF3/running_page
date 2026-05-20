@@ -54,6 +54,7 @@ jobs:
       SAVE_DATA_IN_GITHUB_CACHE: ${{ steps.set_output.outputs.SAVE_DATA_IN_GITHUB_CACHE }}
       DATA_CACHE_PREFIX: ${{ steps.set_output.outputs.DATA_CACHE_PREFIX }}
       BUILD_GH_PAGES: ${{ steps.set_output.outputs.BUILD_GH_PAGES }}
+      HAS_CHANGES: ${{ steps.set_output.outputs.HAS_CHANGES }}
 
     steps:
       - name: Checkout
@@ -276,13 +277,20 @@ jobs:
           warp-cli --accept-tos disconnect
 
       - name: Push new runs
+        id: push_new_runs
         if: env.SAVE_DATA_IN_GITHUB_CACHE != 'true'
         run: |
           git config --local user.email 'action@github.com'
           git config --local user.name 'GitHub Action'
           git add .
-          git commit -m 'update new runs' || echo 'nothing to commit'
-          git push || echo 'nothing to push'
+          if git diff --cached --quiet; then
+            echo 'nothing to commit'
+            echo 'has_changes=false' >> "$GITHUB_OUTPUT"
+          else
+            git commit -m 'update new runs'
+            git push
+            echo 'has_changes=true' >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Set Output
         id: set_output
@@ -290,13 +298,15 @@ jobs:
           SAVE_DATA_IN_GITHUB_CACHE: ${{ env.SAVE_DATA_IN_GITHUB_CACHE }}
           DATA_CACHE_PREFIX: ${{ env.DATA_CACHE_PREFIX }}
           BUILD_GH_PAGES: ${{ env.BUILD_GH_PAGES }}
+          HAS_CHANGES: ${{ steps.push_new_runs.outputs.has_changes || env.SAVE_DATA_IN_GITHUB_CACHE }}
         run: |
           echo "SAVE_DATA_IN_GITHUB_CACHE=$SAVE_DATA_IN_GITHUB_CACHE" >> "$GITHUB_OUTPUT"
           echo "DATA_CACHE_PREFIX=$DATA_CACHE_PREFIX" >> "$GITHUB_OUTPUT"
           echo "BUILD_GH_PAGES=$BUILD_GH_PAGES" >> "$GITHUB_OUTPUT"
+          echo "HAS_CHANGES=$HAS_CHANGES" >> "$GITHUB_OUTPUT"
 
   publish_github_pages:
-    if: needs.sync.result == 'success' && needs.sync.outputs.BUILD_GH_PAGES == 'true'
+    if: needs.sync.result == 'success' && needs.sync.outputs.BUILD_GH_PAGES == 'true' && needs.sync.outputs.HAS_CHANGES == 'true'
     name: Build and publish Github Pages
     uses: ./.github/workflows/gh-pages.yml
     with:

@@ -7,7 +7,7 @@ on:
       - master
     paths:
       - '.github/workflows/gh-pages.yml'
-      - 'assets/index.tsx'
+      - 'assets/**'
       - 'eslint.config.mjs'
       - 'package.json'
       - 'pnpm-lock.yaml'
