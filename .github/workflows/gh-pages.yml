@@ -2,6 +2,20 @@ name: Publish GitHub Pages
 
 # Controls when the action will run.
 on:
+  push:
+    branches:
+      - master
+    paths:
+      - '.github/workflows/gh-pages.yml'
+      - 'assets/index.tsx'
+      - 'eslint.config.mjs'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'public/**'
+      - 'src/**'
+      - 'tsconfig.json'
+      - 'vite-env.d.ts'
+      - 'vite.config.ts'
   workflow_dispatch:
     inputs:
       save_data_in_github_cache:
