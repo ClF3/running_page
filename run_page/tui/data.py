@@ -109,9 +109,11 @@ class Activity:
 
     @property
     def formatted_time(self) -> str:
-        parts = self.moving_time.split(":")
-        if len(parts) == 3:
-            h, m, s = int(parts[0]), int(parts[1]), int(parts[2])
+        seconds = self.moving_seconds
+        if seconds > 0:
+            h = seconds // 3600
+            m = (seconds % 3600) // 60
+            s = seconds % 60
             if h > 0:
                 return f"{h}h{m}m"
             return f"{m}m{s}s"
@@ -119,9 +121,6 @@ class Activity:
 
     @property
     def moving_seconds(self) -> int:
-        parts = self.moving_time.split(":")
-        if len(parts) == 3:
-            return int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
         if "days" in self.moving_time or "day" in self.moving_time:
             # "X days, HH:MM:SS"
             try:
@@ -130,6 +129,12 @@ class Activity:
                 h, m, s = [int(x) for x in time_part.split(":")]
                 return days * 86400 + h * 3600 + m * 60 + s
             except (ValueError, IndexError):
+                pass
+        parts = self.moving_time.split(":")
+        if len(parts) == 3:
+            try:
+                return int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
+            except ValueError:
                 pass
         return 0
 
