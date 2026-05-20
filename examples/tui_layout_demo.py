@@ -1,3 +1,5 @@
+"""Small manual Textual layout demo for local TUI development."""
+
 import asyncio
 from textual.app import App
 from textual.containers import Horizontal, Vertical

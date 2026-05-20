@@ -7,8 +7,10 @@ colour>=0.1.5
 s2sphere
 arrow
 geopy
+pytz
 polyline
 sqlalchemy
+textual
 tzfpy; platform_system != "Windows"
 timezonefinder; platform_system == "Windows"
 pyyaml

@@ -13,6 +13,7 @@ dependencies = [
   "s2sphere",
   "arrow",
   "geopy",
+  "pytz",
   "polyline",
   "sqlalchemy",
   "textual",

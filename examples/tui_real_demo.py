@@ -1,3 +1,5 @@
+"""Manual smoke runner for the real RunningTUI app."""
+
 import asyncio
 from run_page.tui.app import RunningTUI
 

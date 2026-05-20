@@ -1,17 +1,22 @@
 import json
 import unittest
 
-from textual.widgets import Button
+try:
+    from textual.widgets import Button
 
-from run_page.tui.app import (
-    FilterBar,
-    NavSidebar,
-    RunDetailPanel,
-    RunningTUI,
-    StatsView,
-    _monthly_distances,
-)
-from run_page.tui.data import Activity, YearStats
+    from run_page.tui.app import (
+        FilterBar,
+        NavSidebar,
+        RunDetailPanel,
+        RunningTUI,
+        StatsView,
+        _monthly_distances,
+    )
+    from run_page.tui.data import Activity, YearStats
+except ModuleNotFoundError as exc:
+    raise unittest.SkipTest(
+        f"optional TUI dependency is not installed: {exc.name}"
+    ) from exc
 
 
 def _activity(run_id: int, date_local: str) -> dict:

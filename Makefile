@@ -14,7 +14,7 @@ tui:
 	uv run run_page
 
 test:
-	uv run python -m unittest discover -s . -p 'test_*.py'
+	PYTHONPATH=.:run_page python -m unittest discover -s tests -p 'test_*.py'
 
 lint:
 	pnpm run lint

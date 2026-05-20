@@ -27,6 +27,12 @@ jobs:
         run: |
           pip install -r requirements-dev.txt
 
+      - name: Run Python unit and integration tests
+        env:
+          PYTHONPATH: .:run_page
+        run: |
+          python -m unittest discover -s tests -p 'test_*.py'
+
       - name: Run GPX sync test
         run: |
           # make sure the gpx_sync.py script is executable
@@ -68,4 +74,5 @@ jobs:
         run: |
           pnpm run check
           pnpm run lint
+          pnpm run test:frontend
           pnpm run build
