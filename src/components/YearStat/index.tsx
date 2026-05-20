@@ -136,43 +136,58 @@ const YearStat = ({
   year: string;
   onClick: (_year: string) => void;
 }) => {
-  const { activities } = useActivities();
+  const { activities, isComplete, loadYear } = useActivities();
   // for hover
   const [hovered, eventHandlers] = useHover();
   // lazy Component
   const YearSVG = yearSvgs[`./year_${year}.svg`];
   const GithubYearSVG = githubYearSvgs[`./github_${year}.svg`];
   const summary = getYearStatSummaries(activities).get(year);
+  const shouldShowSummary =
+    Boolean(summary) && (year !== 'Total' || isComplete);
 
-  if (!summary) return null;
+  const handleClick = () => {
+    if (year !== 'Total') {
+      void loadYear(year);
+    }
+    onClick(year);
+  };
 
   return (
-    <div className="cursor-pointer" onClick={() => onClick(year)}>
+    <div className="cursor-pointer" onClick={handleClick}>
       <section {...eventHandlers}>
         <Stat value={year} description=" Journey" />
-        <Stat value={summary.runCount} description=" Runs" />
-        <Stat value={summary.totalDistance} description={` ${DIST_UNIT}`} />
-        {SHOW_ELEVATION_GAIN && (
-          <Stat
-            value={summary.totalElevationGain}
-            description=" Elevation Gain"
-          />
-        )}
-        <Stat value={summary.averagePace} description=" Avg Pace" />
-        <Stat value={`${summary.streak} day`} description=" Streak" />
-        {summary.hasHeartRate && (
-          <Stat
-            value={summary.averageHeartRate}
-            description=" Avg Heart Rate"
-          />
+        {shouldShowSummary && summary && (
+          <>
+            <Stat value={summary.runCount} description=" Runs" />
+            <Stat value={summary.totalDistance} description={` ${DIST_UNIT}`} />
+            {SHOW_ELEVATION_GAIN && (
+              <Stat
+                value={summary.totalElevationGain}
+                description=" Elevation Gain"
+              />
+            )}
+            <Stat value={summary.averagePace} description=" Avg Pace" />
+            <Stat value={`${summary.streak} day`} description=" Streak" />
+            {summary.hasHeartRate && (
+              <Stat
+                value={summary.averageHeartRate}
+                description=" Avg Heart Rate"
+              />
+            )}
+          </>
         )}
       </section>
-      {year !== 'Total' && hovered && YearSVG && GithubYearSVG && (
-        <Suspense fallback="loading...">
-          <YearSVG className="year-svg my-4 h-4/6 w-4/6 border-0 p-0" />
-          <GithubYearSVG className="github-year-svg my-4 h-auto w-full border-0 p-0" />
-        </Suspense>
-      )}
+      {shouldShowSummary &&
+        year !== 'Total' &&
+        hovered &&
+        YearSVG &&
+        GithubYearSVG && (
+          <Suspense fallback="loading...">
+            <YearSVG className="year-svg my-4 h-4/6 w-4/6 border-0 p-0" />
+            <GithubYearSVG className="github-year-svg my-4 h-auto w-full border-0 p-0" />
+          </Suspense>
+        )}
       <hr />
     </div>
   );

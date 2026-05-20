@@ -7,6 +7,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 ACTIVITIES_JSON = ROOT / "src" / "static" / "activities.json"
+ACTIVITY_CHUNKS_DIR = ROOT / "src" / "static" / "activity_chunks"
 
 
 class GeneratedActivitiesContractTest(unittest.TestCase):
@@ -62,6 +63,52 @@ class GeneratedActivitiesContractTest(unittest.TestCase):
     def test_records_are_sorted_by_local_start_time(self) -> None:
         start_times = [item["start_date_local"] for item in self.activities]
         self.assertEqual(start_times, sorted(start_times))
+
+    def test_activity_chunks_match_full_activities_json(self) -> None:
+        manifest_path = ACTIVITY_CHUNKS_DIR / "manifest.json"
+        if not manifest_path.exists():
+            self.skipTest("generated activity chunks manifest is not present")
+
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest_years = manifest["years"]
+        years = [item["year"] for item in manifest_years]
+
+        self.assertEqual(manifest["version"], 1)
+        self.assertEqual(manifest["total_count"], len(self.activities))
+        self.assertEqual(years, sorted(years, reverse=True))
+
+        all_chunk_run_ids = []
+        for year_info in manifest_years:
+            year = year_info["year"]
+            chunk_path = ACTIVITY_CHUNKS_DIR / year_info["file"]
+            self.assertTrue(chunk_path.exists(), chunk_path)
+
+            chunk_activities = json.loads(chunk_path.read_text(encoding="utf-8"))
+            expected_activities = [
+                item
+                for item in self.activities
+                if item["start_date_local"].startswith(year)
+            ]
+            self.assertEqual(chunk_activities, expected_activities)
+
+            run_ids = [item["run_id"] for item in chunk_activities]
+            all_chunk_run_ids.extend(run_ids)
+            self.assertEqual(year_info["file"], f"year_{year}.json")
+            self.assertEqual(year_info["count"], len(chunk_activities))
+            self.assertEqual(year_info["run_ids"], run_ids)
+            self.assertEqual(
+                year_info["first_start_date_local"],
+                chunk_activities[0]["start_date_local"],
+            )
+            self.assertEqual(
+                year_info["last_start_date_local"],
+                chunk_activities[-1]["start_date_local"],
+            )
+
+        self.assertEqual(
+            sorted(all_chunk_run_ids),
+            sorted(item["run_id"] for item in self.activities),
+        )
 
 
 if __name__ == "__main__":

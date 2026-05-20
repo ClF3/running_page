@@ -17,7 +17,7 @@ import YearsStat from '@/components/YearsStat';
 import useActivities from '@/hooks/useActivities';
 import getSiteMetadata from '@/hooks/useSiteMetadata';
 import { useInterval } from '@/hooks/useInterval';
-import { IS_CHINESE } from '@/utils/const';
+import { IS_CHINESE, LOADING_TEXT } from '@/utils/const';
 import {
   Activity,
   filterAndSortRuns,
@@ -81,9 +81,14 @@ const setRunHash = (runId: number) => {
 const useRunHashId = () =>
   useSyncExternalStore(subscribeToRunHash, getRunIdFromHash, () => null);
 
+type LocateActivityOptions = {
+  hashMode?: 'auto' | 'clear';
+};
+
 const Index = () => {
   const { siteTitle, siteUrl } = getSiteMetadata();
-  const { activities, thisYear } = useActivities();
+  const { activities, thisYear, isComplete, loadAll, loadYear, yearForRunId } =
+    useActivities();
   const themeChangeCounter = useThemeChangeCounter();
   const [year, setYear] = useState(thisYear);
   const [runIndex, setRunIndex] = useState(-1);
@@ -183,6 +188,7 @@ const Index = () => {
       scrollToMap();
       if (name != 'Year') {
         setYear(thisYear);
+        void loadAll();
       }
       setCurrentFilter({ item, func });
       setRunIndex(-1);
@@ -190,11 +196,17 @@ const Index = () => {
       // Reset single run state when changing filters
       clearRunHash();
     },
-    [thisYear]
+    [loadAll, thisYear]
   );
 
   const changeYear = useCallback(
     (y: string) => {
+      if (y === 'Total') {
+        void loadAll();
+      } else {
+        void loadYear(y);
+      }
+
       // default year
       setYear(y);
 
@@ -208,7 +220,7 @@ const Index = () => {
       // Stop current animation
       setIsAnimating(false);
     },
-    [viewState.zoom, bounds, changeByItem]
+    [viewState.zoom, bounds, changeByItem, loadAll, loadYear]
   );
 
   const changeCity = useCallback(
@@ -226,8 +238,10 @@ const Index = () => {
   );
 
   const locateActivity = useCallback(
-    (runIds: RunIds) => {
+    (runIds: RunIds, options: LocateActivityOptions = {}) => {
       const ids = new Set(runIds);
+      const hashMode = options.hashMode ?? 'auto';
+      const isSingleRunSelection = hashMode === 'auto' && runIds.length === 1;
 
       const selectedRuns = !runIds.length
         ? runs
@@ -243,8 +257,7 @@ const Index = () => {
         return;
       }
 
-      // Set runIndex for table highlighting when single run is selected
-      if (runIds.length === 1) {
+      if (isSingleRunSelection) {
         const runId = runIds[0];
         const runIdx = runs.findIndex((run) => run.run_id === runId);
         setRunIndex(runIdx);
@@ -252,12 +265,10 @@ const Index = () => {
         setRunIndex(-1);
       }
 
-      // Update URL hash when a single run is located
-      if (runIds.length === 1) {
+      if (isSingleRunSelection) {
         const runId = runIds[0];
         setRunHash(runId);
       } else {
-        // If multiple runs or no runs, clear the hash and single run state
         clearRunHash();
       }
 
@@ -271,8 +282,7 @@ const Index = () => {
       // Update the animated geoData immediately to trigger RunMap animation
       setAnimatedGeoData(selectedGeoData);
 
-      // For single run, trigger animation by incrementing the trigger
-      if (runIds.length === 1) {
+      if (isSingleRunSelection) {
         setAnimationTrigger((prev) => prev + 1);
       }
 
@@ -286,28 +296,41 @@ const Index = () => {
     [runs]
   );
 
-  // Auto locate activity when singleRunId is set and activities are loaded
-  // First, detect the run's year and switch to it if needed
+  // Auto locate activity when singleRunId is set.
+  // The manifest lets us load only the target run's year first.
   useEffect(() => {
-    if (singleRunId !== null && activities.length > 0) {
+    if (singleRunId === null) {
+      return;
+    }
+
+    const targetYear = yearForRunId(singleRunId);
+    if (!targetYear) {
+      console.warn(`Run with ID ${singleRunId} not found in activities`);
+      window.history.replaceState(null, '', window.location.pathname);
+      notifyRunHashChange();
+      return;
+    }
+
+    void loadYear(targetYear);
+    if (
+      year !== targetYear ||
+      currentFilter.item !== targetYear ||
+      currentFilter.func !== filterYearRuns
+    ) {
       const frameId = requestAnimationFrame(() => {
-        const targetRun = activities.find((run) => run.run_id === singleRunId);
-        if (targetRun) {
-          const runYear = targetRun.start_date_local.slice(0, 4);
-          if (year !== runYear) {
-            setYear(runYear);
-            setCurrentFilter({ item: runYear, func: filterYearRuns });
-          }
-        } else {
-          // If run doesn't exist, clear the hash and show a warning
-          console.warn(`Run with ID ${singleRunId} not found in activities`);
-          window.history.replaceState(null, '', window.location.pathname);
-          notifyRunHashChange();
-        }
+        setYear(targetYear);
+        setCurrentFilter({ item: targetYear, func: filterYearRuns });
       });
       return () => cancelAnimationFrame(frameId);
     }
-  }, [singleRunId, activities, year]);
+  }, [
+    singleRunId,
+    year,
+    currentFilter.item,
+    currentFilter.func,
+    yearForRunId,
+    loadYear,
+  ]);
 
   useEffect(() => {
     if (singleRunId !== null && runs.length > 0) {
@@ -345,11 +368,11 @@ const Index = () => {
   }, [runs, startAnimation, singleRunId]);
 
   useEffect(() => {
-    if (year !== 'Total') {
+    if (year !== 'Total' || !isComplete) {
       return;
     }
 
-    let svgStat = document.getElementById('svgStat');
+    const svgStat = document.getElementById('svgStat');
     if (!svgStat) {
       return;
     }
@@ -389,10 +412,13 @@ const Index = () => {
           }
           if (selectedRunDateRef.current === runDate) {
             selectedRunDateRef.current = null;
-            locateActivity(runs.map((r) => r.run_id));
+            locateActivity(
+              runs.map((r) => r.run_id),
+              { hashMode: 'clear' }
+            );
           } else {
             selectedRunDateRef.current = runDate;
-            locateActivity(runIDsOnDate);
+            locateActivity(runIDsOnDate, { hashMode: 'clear' });
           }
         }
       }
@@ -401,7 +427,7 @@ const Index = () => {
     return () => {
       svgStat && svgStat.removeEventListener('click', handleClick);
     };
-  }, [year, locateActivity, runs, thisYear]);
+  }, [year, isComplete, locateActivity, runs, thisYear]);
 
   const { theme } = useTheme();
 
@@ -434,7 +460,9 @@ const Index = () => {
           thisYear={year}
           animationTrigger={animationTrigger}
         />
-        {year === 'Total' ? (
+        {year === 'Total' && !isComplete ? (
+          <div className="text-center">{LOADING_TEXT}</div>
+        ) : year === 'Total' ? (
           <SVGStat />
         ) : (
           <RunTable

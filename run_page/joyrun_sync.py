@@ -1,7 +1,6 @@
 # some code from https://github.com/fieryd/PKURunningHelper great thanks
 import argparse
 import ast
-import json
 import os
 import subprocess
 import sys
@@ -28,7 +27,7 @@ from config import (
     start_point,
 )
 from generator import Generator
-from utils import adjust_time
+from utils import adjust_time, write_activities_files
 
 # struct body
 FitType = np.dtype(
@@ -791,8 +790,7 @@ if __name__ == "__main__":
     )
     generator.sync_from_app(tracks)
     activities_list = generator.load()
-    with open(JSON_FILE, "w") as f:
-        json.dump(activities_list, f)
+    write_activities_files(activities_list, JSON_FILE)
 
     print("Data export to DB done")
     _generate_svg_profile(options.athlete, options.min_grid_distance)

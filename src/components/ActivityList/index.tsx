@@ -761,7 +761,7 @@ const activityCardAreEqual = (
 const ActivityCard = React.memo(ActivityCardInner, activityCardAreEqual);
 
 const ActivityList: React.FC = () => {
-  const { activities: activityData } = useActivities();
+  const { activities: activityData } = useActivities('all');
   const [interval, setInterval] = useState<IntervalType>('month');
   const [sportType, setSportType] = useState<string>('all');
   const [selectedYear, setSelectedYear] = useState<string | null>(null);

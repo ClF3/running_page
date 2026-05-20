@@ -40,6 +40,7 @@ class GpxPipelineIntegrationTest(unittest.TestCase):
             )
             db_path = root / "data.db"
             json_path = root / "activities.json"
+            chunks_dir = root / "activity_chunks"
 
             with mock.patch(
                 "gpxtrackposter.track_loader.load_synced_file_list",
@@ -55,6 +56,10 @@ class GpxPipelineIntegrationTest(unittest.TestCase):
                                 make_activities_file(db_path, gpx_dir, json_path)
 
             activities = json.loads(json_path.read_text(encoding="utf-8"))
+            manifest = json.loads(
+                (chunks_dir / "manifest.json").read_text(encoding="utf-8")
+            )
+            chunk_exists = (chunks_dir / manifest["years"][0]["file"]).exists()
             with sqlite3.connect(db_path) as conn:
                 rows = conn.execute(
                     "select run_id, name, distance, type, summary_polyline "
@@ -62,6 +67,10 @@ class GpxPipelineIntegrationTest(unittest.TestCase):
                 ).fetchall()
 
         self.assertEqual(len(activities), 1)
+        self.assertEqual(manifest["total_count"], 1)
+        self.assertEqual(len(manifest["years"]), 1)
+        self.assertEqual(manifest["years"][0]["count"], 1)
+        self.assertTrue(chunk_exists)
         self.assertEqual(len(rows), 1)
         activity = activities[0]
         self.assertEqual(activity["name"], "Integration Run")

@@ -1,6 +1,7 @@
 import json
 import time
 from datetime import datetime
+from pathlib import Path
 
 import pytz
 
@@ -11,6 +12,10 @@ except Exception:
 from generator import Generator
 from stravalib.client import Client
 from stravalib.exc import RateLimitExceeded
+
+ACTIVITY_CHUNKS_DIR_NAME = "activity_chunks"
+ACTIVITY_CHUNKS_MANIFEST = "manifest.json"
+ACTIVITY_CHUNKS_VERSION = 1
 
 
 def adjust_time(time, tz_name):
@@ -49,6 +54,51 @@ def to_date(ts):
         raise ValueError(f"cannot parse timestamp {ts} into date")
 
 
+def write_activities_files(activities_list, json_file):
+    json_path = Path(json_file)
+    json_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(json_path, "w") as f:
+        json.dump(activities_list, f)
+
+    chunks_dir = json_path.parent / ACTIVITY_CHUNKS_DIR_NAME
+    chunks_dir.mkdir(parents=True, exist_ok=True)
+    for stale_chunk in chunks_dir.glob("year_*.json"):
+        stale_chunk.unlink()
+
+    activities_by_year = {}
+    for activity in activities_list:
+        year = activity.get("start_date_local", "")[:4]
+        if not year:
+            continue
+        activities_by_year.setdefault(year, []).append(activity)
+
+    years = sorted(activities_by_year.keys(), reverse=True)
+    manifest_years = []
+    for year in years:
+        year_activities = activities_by_year[year]
+        chunk_file = f"year_{year}.json"
+        with open(chunks_dir / chunk_file, "w") as f:
+            json.dump(year_activities, f)
+        manifest_years.append(
+            {
+                "year": year,
+                "file": chunk_file,
+                "count": len(year_activities),
+                "run_ids": [activity["run_id"] for activity in year_activities],
+                "first_start_date_local": year_activities[0].get("start_date_local"),
+                "last_start_date_local": year_activities[-1].get("start_date_local"),
+            }
+        )
+
+    manifest = {
+        "version": ACTIVITY_CHUNKS_VERSION,
+        "total_count": len(activities_list),
+        "years": manifest_years,
+    }
+    with open(chunks_dir / ACTIVITY_CHUNKS_MANIFEST, "w") as f:
+        json.dump(manifest, f)
+
+
 def make_activities_file(
     sql_file, data_dir, json_file, file_suffix="gpx", activity_title_dict={}
 ):
@@ -57,8 +107,7 @@ def make_activities_file(
         data_dir, file_suffix=file_suffix, activity_title_dict=activity_title_dict
     )
     activities_list = generator.load()
-    with open(json_file, "w") as f:
-        json.dump(activities_list, f)
+    write_activities_files(activities_list, json_file)
 
 
 def make_strava_client(client_id, client_secret, refresh_token):

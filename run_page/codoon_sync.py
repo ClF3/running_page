@@ -26,7 +26,12 @@ from config import (
 )
 from generator import Generator
 from tzlocal import get_localzone
-from utils import adjust_time_to_utc, adjust_timestamp_to_utc, to_date
+from utils import (
+    adjust_time_to_utc,
+    adjust_timestamp_to_utc,
+    to_date,
+    write_activities_files,
+)
 
 # struct body
 FitType = np.dtype(
@@ -697,5 +702,4 @@ if __name__ == "__main__":
 
     generator.sync_from_app(tracks)
     activities_list = generator.load()
-    with open(JSON_FILE, "w") as f:
-        json.dump(activities_list, f, indent=0)
+    write_activities_files(activities_list, JSON_FILE)

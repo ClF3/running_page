@@ -12,7 +12,7 @@ import polyline
 from config import BASE_TIMEZONE, ENDOMONDO_FILE_DIR, JSON_FILE, SQL_FILE
 from generator import Generator
 
-from utils import adjust_time
+from utils import adjust_time, write_activities_files
 
 # TODO Same as keep_sync maybe refactor
 start_point = namedtuple("start_point", "lat lon")
@@ -112,8 +112,7 @@ def run_enomondo_sync():
         tracks.append(track)
     generator.sync_from_app(tracks)
     activities_list = generator.load()
-    with open(JSON_FILE, "w") as f:
-        json.dump(activities_list, f)
+    write_activities_files(activities_list, JSON_FILE)
 
 
 if __name__ == "__main__":

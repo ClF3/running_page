@@ -21,7 +21,7 @@ from config import (
 )
 from Crypto.Cipher import AES
 from generator import Generator
-from utils import adjust_time
+from utils import adjust_time, write_activities_files
 import xml.etree.ElementTree as ET
 
 KEEP_SPORT_TYPES = ["running", "hiking", "cycling"]
@@ -503,8 +503,7 @@ def run_keep_sync(
     generator.sync_from_app(new_tracks)
 
     activities_list = generator.load()
-    with open(JSON_FILE, "w") as f:
-        json.dump(activities_list, f)
+    write_activities_files(activities_list, JSON_FILE)
 
 
 if __name__ == "__main__":

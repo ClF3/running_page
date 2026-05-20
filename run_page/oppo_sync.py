@@ -1,6 +1,5 @@
 import argparse
 import hashlib
-import json
 import os
 import time
 import xml.etree.ElementTree as ET
@@ -23,7 +22,7 @@ from config import (
     UTC_TIMEZONE,
 )
 from generator import Generator
-from utils import adjust_time
+from utils import adjust_time, write_activities_files
 
 TOKEN_REFRESH_URL = "https://sport.health.heytapmobi.com/open/v1/oauth/token"
 
@@ -689,8 +688,7 @@ def run_oppo_sync(
     generator.sync_from_app(new_tracks)
 
     activities_list = generator.load()
-    with open(JSON_FILE, "w") as f:
-        json.dump(activities_list, f, indent=0)
+    write_activities_files(activities_list, JSON_FILE)
 
 
 if __name__ == "__main__":

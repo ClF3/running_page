@@ -32,6 +32,7 @@ Object.defineProperty(globalThis, 'navigator', {
 let server;
 let utils;
 let geoUtils;
+let activitiesHook;
 
 const run = (overrides = {}) => ({
   run_id: 1,
@@ -71,6 +72,7 @@ before(async () => {
   });
   utils = await server.ssrLoadModule('/src/utils/utils.ts');
   geoUtils = await server.ssrLoadModule('/src/utils/geoUtils.ts');
+  activitiesHook = await server.ssrLoadModule('/src/hooks/useActivities.ts');
 });
 
 after(async () => {
@@ -138,4 +140,101 @@ test('geo utilities decode routes and produce route feature collections', () => 
   assert.equal(typeof bounds.longitude, 'number');
   assert.equal(typeof bounds.latitude, 'number');
   assert.equal(bounds.zoom, 11.5);
+});
+
+const jsonResponse = (body) => ({
+  ok: true,
+  status: 200,
+  json: async () => body,
+});
+
+test('activity loader fetches newest chunks first and merges loaded years', async (t) => {
+  const loader = activitiesHook.__activityLoaderTest;
+  const originalFetch = globalThis.fetch;
+  const manifest = {
+    version: 1,
+    total_count: 3,
+    years: [
+      {
+        year: '2026',
+        file: 'year_2026.json',
+        count: 1,
+        run_ids: [3],
+        first_start_date_local: '2026-01-01 08:00:00',
+        last_start_date_local: '2026-01-01 08:00:00',
+      },
+      {
+        year: '2025',
+        file: 'year_2025.json',
+        count: 1,
+        run_ids: [2],
+        first_start_date_local: '2025-01-01 08:00:00',
+        last_start_date_local: '2025-01-01 08:00:00',
+      },
+      {
+        year: '2024',
+        file: 'year_2024.json',
+        count: 1,
+        run_ids: [1],
+        first_start_date_local: '2024-01-01 08:00:00',
+        last_start_date_local: '2024-01-01 08:00:00',
+      },
+    ],
+  };
+  const chunks = {
+    'year_2024.json': [
+      run({ run_id: 1, start_date_local: '2024-01-01 08:00:00' }),
+    ],
+    'year_2025.json': [
+      run({ run_id: 2, start_date_local: '2025-01-01 08:00:00' }),
+    ],
+    'year_2026.json': [
+      run({ run_id: 3, start_date_local: '2026-01-01 08:00:00' }),
+    ],
+  };
+  const fetchCalls = [];
+
+  loader.reset();
+  globalThis.fetch = async (url) => {
+    const href = String(url);
+    fetchCalls.push(href);
+    if (href.includes('manifest.json')) return jsonResponse(manifest);
+
+    const chunkName = Object.keys(chunks).find((name) => href.includes(name));
+    if (chunkName) return jsonResponse(chunks[chunkName]);
+
+    return { ok: false, status: 404, json: async () => ({}) };
+  };
+
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+    loader.reset();
+  });
+
+  const loadedManifest = await loader.loadActivityManifest();
+  await loader.loadActivityYear(loadedManifest.years[0].year);
+
+  assert.match(fetchCalls[0], /manifest\.json/);
+  assert.match(fetchCalls[1], /year_2026\.json/);
+  assert.deepEqual(
+    loader.getLoadedActivityData(loadedManifest).map((activity) => activity.run_id),
+    [3]
+  );
+
+  const yearPromise = loader.loadActivityYear('2025');
+  assert.equal(loader.loadActivityYear('2025'), yearPromise);
+  await yearPromise;
+  assert.equal(
+    fetchCalls.filter((url) => url.includes('year_2025.json')).length,
+    1
+  );
+
+  await loader.prefetchRemainingActivityYears(loadedManifest);
+
+  assert.deepEqual(
+    loader.getLoadedActivityData(loadedManifest).map((activity) => activity.run_id),
+    [1, 2, 3]
+  );
+  assert.equal(loader.findActivityYearForRunId(loadedManifest, 2), '2025');
+  assert.equal(loader.findActivityYearForRunId(loadedManifest, 999), null);
 });

@@ -1,5 +1,4 @@
 import argparse
-import json
 import os
 from collections import namedtuple
 from datetime import datetime, timedelta, timezone
@@ -10,7 +9,7 @@ import requests
 from config import GPX_FOLDER, JSON_FILE, SQL_FILE, run_map, start_point
 from generator import Generator
 from xml.etree import ElementTree
-from utils import adjust_time_to_utc
+from utils import adjust_time_to_utc, write_activities_files
 
 # need to test
 ACTIVITY_LIST_API = "https://open.tulipsport.com/api/v1/feeds4likes?start_time={start_time}&end_time={end_time}"
@@ -271,8 +270,7 @@ def sync_tulipsport_activites(token, with_gpx=False):
     generator.sync_from_app(new_tracks)
 
     activities_list = generator.load()
-    with open(JSON_FILE, "w") as f:
-        json.dump(activities_list, f)
+    write_activities_files(activities_list, JSON_FILE)
 
 
 if __name__ == "__main__":
