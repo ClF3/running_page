@@ -45,14 +45,26 @@ class GridDrawer(TracksDrawer):
             p = XY(index % count_x, index // count_x) * XY(
                 cell_size + spacing_x, cell_size + spacing_y
             )
+            cell_offset = offset + p
+            cell_size_xy = XY(cell_size, cell_size)
             self._draw_track(
                 dr,
                 tr,
-                0.9 * XY(cell_size, cell_size),
-                offset + 0.05 * XY(cell_size, cell_size) + p,
+                0.9 * cell_size_xy,
+                cell_offset + 0.05 * cell_size_xy,
+                cell_size_xy,
+                cell_offset,
             )
 
-    def _draw_track(self, dr: svgwrite.Drawing, tr: Track, size: XY, offset: XY):
+    def _draw_track(
+        self,
+        dr: svgwrite.Drawing,
+        tr: Track,
+        size: XY,
+        offset: XY,
+        hit_size: XY,
+        hit_offset: XY,
+    ):
         color = self.color(self.poster.length_range, tr.length, tr.special)
 
         str_length = format_float(self.poster.m2u(tr.length))
@@ -80,3 +92,15 @@ class GridDrawer(TracksDrawer):
             )
             polyline.set_desc(title=date_title, desc=tr.run_id)
             dr.add(polyline)
+
+        hit_rect = dr.rect(
+            hit_offset.tuple(),
+            hit_size.tuple(),
+            fill="#FFFFFF",
+            fill_opacity=0,
+            stroke="none",
+            style="cursor: pointer; pointer-events: all;",
+        )
+        hit_rect.update({"class": "grid-hit-area"})
+        hit_rect.set_desc(title=date_title, desc=tr.run_id)
+        dr.add(hit_rect)

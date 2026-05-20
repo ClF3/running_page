@@ -37,6 +37,8 @@ import {
 import { useTheme, useThemeChangeCounter } from '@/hooks/useTheme';
 
 const HASH_RUN_CHANGE_EVENT = 'running-page-hash-run-change';
+const SVG_CLICK_TARGET_SELECTOR =
+  'path, rect, polyline, polygon, line, circle, ellipse';
 
 const getRunIdFromHash = () => {
   if (typeof window === 'undefined') return null;
@@ -80,6 +82,20 @@ const setRunHash = (runId: number) => {
 
 const useRunHashId = () =>
   useSyncExternalStore(subscribeToRunHash, getRunIdFromHash, () => null);
+
+const getSvgClickTarget = (
+  eventTarget: EventTarget | null,
+  svgStat: HTMLElement
+) => {
+  if (typeof Element === 'undefined' || !(eventTarget instanceof Element)) {
+    return null;
+  }
+  const target = eventTarget.closest<SVGElement>(SVG_CLICK_TARGET_SELECTOR);
+  if (!target || !svgStat.contains(target)) {
+    return null;
+  }
+  return target;
+};
 
 type LocateActivityOptions = {
   hashMode?: 'auto' | 'clear';
@@ -378,8 +394,8 @@ const Index = () => {
     }
 
     const handleClick = (e: Event) => {
-      const target = e.target as HTMLElement;
-      if (target.tagName.toLowerCase() === 'path') {
+      const target = getSvgClickTarget(e.target, svgStat);
+      if (target) {
         // Use querySelector to get the <desc> element and the <title> element.
         const descEl = target.querySelector('desc');
         if (descEl) {
