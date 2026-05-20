@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import contextlib
+import io
 import unittest
 
 try:
@@ -63,7 +65,8 @@ class GeneratorRouteTest(unittest.TestCase):
             },
         ]
 
-        fixed = Generator._fix_indoor_locations(activities)
+        with contextlib.redirect_stdout(io.StringIO()):
+            fixed = Generator._fix_indoor_locations(activities)
         indoor = fixed[1]
 
         self.assertEqual(indoor["subtype"], "indoor")

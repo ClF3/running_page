@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import sqlite3
 import tempfile
@@ -49,7 +51,8 @@ class GpxPipelineIntegrationTest(unittest.TestCase):
                             "gpxtrackposter.track_loader.TrackLoader._load_data_tracks",
                             side_effect=_load_tracks_serial,
                         ):
-                            make_activities_file(db_path, gpx_dir, json_path)
+                            with contextlib.redirect_stdout(io.StringIO()):
+                                make_activities_file(db_path, gpx_dir, json_path)
 
             activities = json.loads(json_path.read_text(encoding="utf-8"))
             with sqlite3.connect(db_path) as conn:
