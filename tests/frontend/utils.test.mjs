@@ -66,7 +66,7 @@ before(async () => {
         { find: '@', replacement: path.resolve('src') },
       ],
     },
-    server: { middlewareMode: true, hmr: false },
+    server: { middlewareMode: true, hmr: false, ws: false },
     ssr: { noExternal: ['gcoord', '@math.gl/web-mercator'] },
   });
   utils = await server.ssrLoadModule('/src/utils/utils.ts');
