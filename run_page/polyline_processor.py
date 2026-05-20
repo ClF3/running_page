@@ -70,21 +70,30 @@ def range_hiding(
 
 
 def start_end_hiding(polyline: List[Tuple[float]], distance: int) -> List[Tuple[float]]:
-    start_index, end_index = 0, len(polyline) - 1
+    if not polyline:
+        return []
+    if distance <= 0:
+        return polyline
 
     starting_distance = 0
+    start_index = None
     for i in range(1, len(polyline)):
         starting_distance += haversine(polyline[i], polyline[i - 1])
         if starting_distance > distance:
             start_index = i
             break
+    if start_index is None:
+        return []
 
     ending_distance = 0
+    end_index = None
     for i in range(len(polyline) - 2, -1, -1):
         ending_distance += haversine(polyline[i], polyline[i + 1])
         if ending_distance > distance:
             end_index = i
             break
+    if end_index is None:
+        return []
 
     if start_index >= end_index:
         return []
