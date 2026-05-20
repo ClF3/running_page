@@ -6,16 +6,17 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
-from tests.helpers import require_modules
-
-require_modules("geopy", "sqlalchemy")
-
-from run_page.generator.db import (
-    ACTIVITY_KEYS,
-    Activity,
-    init_db,
-    update_or_create_activity,
-)
+try:
+    from run_page.generator.db import (
+        ACTIVITY_KEYS,
+        Activity,
+        init_db,
+        update_or_create_activity,
+    )
+except ModuleNotFoundError as exc:
+    raise unittest.SkipTest(
+        f"optional generator dependency is not installed: {exc.name}"
+    ) from exc
 
 
 def fake_activity(
@@ -54,7 +55,7 @@ def fake_activity(
 class GeneratorDbTest(unittest.TestCase):
     def test_init_db_creates_expected_activity_columns(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            session = init_db(Path(tmp) / "data.db")
+            init_db(Path(tmp) / "data.db")
 
             column_names = {column.name for column in Activity.__table__.columns}
 

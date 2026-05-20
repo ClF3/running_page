@@ -2,14 +2,15 @@ from __future__ import annotations
 
 import unittest
 
-from tests.helpers import require_modules
+try:
+    import s2sphere as s2
 
-require_modules("colour", "s2sphere")
-
-import s2sphere as s2
-
-from run_page.gpxtrackposter.utils import compute_grid, lat2y, lng2x, project
-from run_page.gpxtrackposter.xy import XY
+    from run_page.gpxtrackposter.utils import compute_grid, lat2y, lng2x, project
+    from run_page.gpxtrackposter.xy import XY
+except ModuleNotFoundError as exc:
+    raise unittest.SkipTest(
+        f"optional gpxtrackposter dependency is not installed: {exc.name}"
+    ) from exc
 
 
 class GpxTrackPosterUtilsTest(unittest.TestCase):
@@ -50,4 +51,3 @@ class GpxTrackPosterUtilsTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

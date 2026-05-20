@@ -3,13 +3,14 @@ from __future__ import annotations
 import unittest
 from unittest import mock
 
-from tests.helpers import require_modules
+try:
+    import polyline
 
-require_modules("polyline", "haversine")
-
-import polyline
-
-from run_page import polyline_processor
+    from run_page import polyline_processor
+except ModuleNotFoundError as exc:
+    raise unittest.SkipTest(
+        f"optional polyline dependency is not installed: {exc.name}"
+    ) from exc
 
 
 class PolylineProcessorTest(unittest.TestCase):

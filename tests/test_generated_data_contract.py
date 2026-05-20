@@ -5,7 +5,6 @@ import unittest
 from datetime import datetime
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
 ACTIVITIES_JSON = ROOT / "src" / "static" / "activities.json"
 
@@ -67,4 +66,3 @@ class GeneratedActivitiesContractTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

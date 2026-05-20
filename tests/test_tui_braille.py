@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import unittest
 
-from tests.helpers import require_modules
+try:
+    import polyline
 
-require_modules("polyline")
-
-import polyline
-
-from run_page.tui.braille import BrailleCanvas, render_polyline
+    from run_page.tui.braille import BrailleCanvas, render_polyline
+except ModuleNotFoundError as exc:
+    raise unittest.SkipTest(
+        f"optional TUI route dependency is not installed: {exc.name}"
+    ) from exc
 
 
 class BrailleCanvasTest(unittest.TestCase):
@@ -28,9 +29,7 @@ class BrailleCanvasTest(unittest.TestCase):
         )
 
     def test_render_polyline_scales_route_to_requested_dimensions(self) -> None:
-        encoded = polyline.encode(
-            [(39.9, 116.3), (39.901, 116.301), (39.902, 116.302)]
-        )
+        encoded = polyline.encode([(39.9, 116.3), (39.901, 116.301), (39.902, 116.302)])
 
         lines = render_polyline(encoded, 12, 5)
 
@@ -41,4 +40,3 @@ class BrailleCanvasTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
