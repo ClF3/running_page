@@ -58,9 +58,7 @@ const ENGLISH_INFO_MESSAGE = (yearLength: number, year: string): string =>
   `Running Journey with ${yearLength} Years, the table shows year ${year} data`;
 
 // English is not supported for location info messages yet
-const CHINESE_LOCATION_INFO_MESSAGE_FIRST =
-  '跑过了一些地方，希望随着时间推移，点亮的地方越来越多';
-const CHINESE_LOCATION_INFO_MESSAGE_SECOND = '不要停下来，不要停下奔跑的脚步';
+const CHINESE_LOCATION_INFO_MESSAGE = '至少在这一刻，热爱不问为何！';
 
 const INFO_MESSAGE = IS_CHINESE ? CHINESE_INFO_MESSAGE : ENGLISH_INFO_MESSAGE;
 const FULL_MARATHON_RUN_TITLE = IS_CHINESE ? '全程马拉松' : 'Full Marathon';
@@ -140,8 +138,7 @@ const ACTIVITY_TOTAL = {
 };
 
 export {
-  CHINESE_LOCATION_INFO_MESSAGE_FIRST,
-  CHINESE_LOCATION_INFO_MESSAGE_SECOND,
+  CHINESE_LOCATION_INFO_MESSAGE,
   MAPBOX_TOKEN,
   MUNICIPALITY_CITIES_ARR,
   MAP_LAYER_LIST,
