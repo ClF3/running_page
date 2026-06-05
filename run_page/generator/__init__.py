@@ -13,7 +13,15 @@ from synced_data_file_logger import save_synced_data_file_list
 
 from .db import Activity, init_db, update_or_create_activity
 
-IGNORE_BEFORE_SAVING = os.getenv("IGNORE_BEFORE_SAVING", False)
+
+def _env_flag(name, default=False):
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+IGNORE_BEFORE_SAVING = _env_flag("IGNORE_BEFORE_SAVING")
 
 
 # Bounding box spread threshold (degrees) for indoor activity detection.
@@ -49,6 +57,40 @@ class Generator:
         self.client.access_token = response["access_token"]
         print("Access ok")
 
+    @staticmethod
+    def _replace_activity_map(run_activity, activity_map):
+        if hasattr(run_activity, "_replace"):
+            return run_activity._replace(map=activity_map)
+        try:
+            run_activity.map = activity_map
+        except AttributeError:
+            pass
+        return run_activity
+
+    @staticmethod
+    def _replace_summary_polyline(activity_map, summary_polyline):
+        if hasattr(activity_map, "_replace"):
+            return activity_map._replace(summary_polyline=summary_polyline)
+        try:
+            activity_map.summary_polyline = summary_polyline
+        except AttributeError:
+            pass
+        return activity_map
+
+    @classmethod
+    def _apply_privacy_filter_before_saving(cls, run_activity):
+        if not IGNORE_BEFORE_SAVING:
+            return run_activity
+
+        activity_map = getattr(run_activity, "map", None)
+        summary_polyline = getattr(activity_map, "summary_polyline", None)
+        if not summary_polyline:
+            return run_activity
+
+        filtered_polyline = filter_out(summary_polyline) or ""
+        activity_map = cls._replace_summary_polyline(activity_map, filtered_polyline)
+        return cls._replace_activity_map(run_activity, activity_map)
+
     def sync(self, force):
         """
         Sync activities means sync from strava
@@ -71,11 +113,7 @@ class Generator:
         for activity in self.client.get_activities(**filters):
             if self.only_run and activity.type != "Run":
                 continue
-            if IGNORE_BEFORE_SAVING:
-                if activity.map and activity.map.summary_polyline:
-                    activity.map.summary_polyline = filter_out(
-                        activity.map.summary_polyline
-                    )
+            activity = self._apply_privacy_filter_before_saving(activity)
             #  strava use total_elevation_gain as elevation_gain
             activity.elevation_gain = activity.total_elevation_gain
             activity.subtype = activity.type
@@ -100,9 +138,10 @@ class Generator:
         synced_files = []
 
         for t in tracks:
-            created = update_or_create_activity(
-                self.session, t.to_namedtuple(run_from=file_suffix)
+            run_activity = self._apply_privacy_filter_before_saving(
+                t.to_namedtuple(run_from=file_suffix)
             )
+            created = update_or_create_activity(self.session, run_activity)
             if created:
                 sys.stdout.write("+")
             else:
@@ -121,7 +160,9 @@ class Generator:
         print("Syncing tracks '+' means new track '.' means update tracks")
         synced_files = []
         for t in app_tracks:
-            created = update_or_create_activity(self.session, t)
+            created = update_or_create_activity(
+                self.session, self._apply_privacy_filter_before_saving(t)
+            )
             if created:
                 sys.stdout.write("+")
             else:
@@ -159,20 +200,9 @@ class Generator:
                 streak = 1
             activity.streak = streak  # type: ignore
             last_date = date
-            if not IGNORE_BEFORE_SAVING:
-                activity.summary_polyline = filter_out(activity.summary_polyline)  # type: ignore
             activity_list.append(activity.to_dict())
 
         activity_list = self._fix_indoor_locations(activity_list)
-
-        # Persist indoor subtype back to DB so SVG generation can pick it up.
-        for a in activity_list:
-            if a.get("subtype") == "indoor":
-                db_activity = self.session.query(Activity).get(a["run_id"])
-                if db_activity:
-                    if db_activity.subtype != "indoor":
-                        db_activity.subtype = "indoor"
-        self.session.commit()
 
         return activity_list
 
