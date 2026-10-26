@@ -96,18 +96,13 @@ const DashboardSidebar = ({
   const { years, locations } = useActivities();
   const stats = useMemo(() => summarizeDashboard(runs), [runs]);
   const metrics = [
-    [
-      'Activities',
-      stats.runCount.toLocaleString(),
-      stats.runCount === 1 ? 'run' : 'runs',
-    ],
-    ['Avg. Pace', stats.pace, `/${DIST_UNIT}`],
+    ['Activities', stats.runCount.toLocaleString()],
+    ['Avg. Pace', stats.pace],
     [
       'Longest Streak',
-      stats.longestStreak,
-      stats.longestStreak === 1 ? 'day' : 'days',
+      `${stats.longestStreak} ${stats.longestStreak === 1 ? 'day' : 'days'}`,
     ],
-    ['Avg. Heart Rate', stats.heartRate, 'bpm'],
+    ['Avg. Heart Rate', stats.heartRate],
     ...(SHOW_ELEVATION_GAIN
       ? [
           [
@@ -159,7 +154,7 @@ const DashboardSidebar = ({
             <dt>{name}</dt>
             <dd>
               <strong>{value}</strong>
-              <span>{unit}</span>
+              {unit && <span>{unit}</span>}
             </dd>
           </div>
         ))}
