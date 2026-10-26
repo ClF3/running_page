@@ -127,28 +127,27 @@ const DashboardSidebar = ({
         </h1>
         <p className={styles.motto}>{SITE_MOTTO}</p>
       </header>
-      <div className={styles.scope}>
-        <span>{selectedPlace ? 'Place Stats' : 'Yearly Stats'}</span>
-        <select
-          aria-label={label('统计范围', 'Summary scope')}
-          value={selectedPlace ? '' : year}
-          onChange={(event) => onChangeYear(event.target.value)}
-        >
-          {selectedPlace && (
-            <option value="" disabled>
-              {getPlaceDisplayName(selectedPlace)}
-            </option>
-          )}
-          {years.map((value) => (
-            <option key={value} value={value}>
-              {value}
-            </option>
-          ))}
-          <option value="Total">{label('全部年份', 'All years')}</option>
-        </select>
-      </div>
       <section className={styles.hero} aria-label="Total Distance">
-        <p>Total Distance</p>
+        <div className={styles.scope}>
+          <p>Total Distance</p>
+          <select
+            aria-label={label('统计范围', 'Summary scope')}
+            value={selectedPlace ? '' : year}
+            onChange={(event) => onChangeYear(event.target.value)}
+          >
+            {selectedPlace && (
+              <option value="" disabled>
+                {getPlaceDisplayName(selectedPlace)}
+              </option>
+            )}
+            {years.map((value) => (
+              <option key={value} value={value}>
+                {value}
+              </option>
+            ))}
+            <option value="Total">{label('全部年份', 'All years')}</option>
+          </select>
+        </div>
         <div className={styles.distance}>
           <strong>{distance(stats.distanceMeters)}</strong>
           <span>{DIST_UNIT}</span>
