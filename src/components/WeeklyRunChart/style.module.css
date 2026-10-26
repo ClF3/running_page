@@ -42,8 +42,8 @@
 }
 
 .summary {
-  --summary-label-width: 8rem;
-  --summary-metric-width: 6.25rem;
+  --summary-label-width: clamp(6rem, 9vw, 8rem);
+  --summary-metric-width: clamp(4.75rem, 7vw, 6.25rem);
   --summary-gap: clamp(0.28rem, 0.8vw, 0.48rem);
 
   display: grid;
@@ -56,7 +56,7 @@
   justify-content: center;
   min-height: 1.75rem;
   margin-bottom: 0.35rem;
-  font-size: clamp(0.78rem, 1.8vw, 1rem);
+  font-size: clamp(0.78rem, 1.1vw, 0.95rem);
   line-height: 1.4;
 }
 
@@ -152,6 +152,13 @@
 .selected:hover .bar,
 .selected:focus-visible .bar {
   fill: var(--weekly-chart-bar-selected);
+}
+
+@media (min-width: 1024px) {
+  .chart {
+    max-width: 48rem;
+    margin-inline: auto;
+  }
 }
 
 @media only screen and (max-width: 768px) {

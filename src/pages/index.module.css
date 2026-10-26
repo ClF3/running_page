@@ -25,8 +25,12 @@
 
 @media (min-width: 1024px) {
   .dashboard {
-    grid-template-columns: 17rem minmax(0, 1fr);
+    grid-template-columns: minmax(20rem, 1fr) minmax(0, 2fr);
     gap: clamp(1.5rem, 3vw, 3rem);
+  }
+
+  .title {
+    font-size: clamp(2.25rem, 3.2vw, 2.75rem);
   }
 
   .content {

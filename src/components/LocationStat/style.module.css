@@ -96,3 +96,27 @@
   outline: 2px solid var(--color-primary);
   outline-offset: 2px;
 }
+
+@media (min-width: 1024px) {
+  .intro,
+  .heading {
+    font-size: 1rem;
+  }
+
+  .metric dd {
+    font-size: 2.25rem;
+  }
+
+  .metric dt,
+  .heading span,
+  .cityButton > span:last-child,
+  .periods span,
+  .periods button,
+  .toggle {
+    font-size: 0.95rem;
+  }
+
+  .cityButton {
+    font-size: 1.1rem;
+  }
+}
