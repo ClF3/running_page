@@ -9,15 +9,6 @@
   min-width: 0;
 }
 
-.title {
-  margin: 0 0 1.5rem;
-  font-size: clamp(2rem, 3vw, 2.5rem);
-  font-weight: 800;
-  font-style: italic;
-  line-height: 1.15;
-  text-wrap: balance;
-}
-
 .content {
   --run-map-height: clamp(17.5rem, 62.5cqw, 32rem);
   container-type: inline-size;
@@ -28,10 +19,6 @@
   .dashboard {
     grid-template-columns: clamp(20rem, 26vw, 23rem) minmax(0, 1fr);
     gap: clamp(1.5rem, 2.5vw, 2.5rem);
-  }
-
-  .title {
-    font-size: clamp(2.25rem, 3.2vw, 2.75rem);
   }
 
   .content {

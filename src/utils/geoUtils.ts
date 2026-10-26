@@ -1,7 +1,13 @@
 import * as mapboxPolyline from '@mapbox/polyline';
 import gcoord from 'gcoord';
 import { WebMercatorViewport } from '@math.gl/web-mercator';
-import type { FeatureCollection, LineString, Feature } from 'geojson';
+import type {
+  FeatureCollection,
+  LineString,
+  Feature,
+  Point,
+  Position,
+} from 'geojson';
 import type { GeoJsonProperties } from 'geojson';
 import type { RPGeometry } from '@/static/run_countries';
 import worldGeoJsonUrl from '@/static/world.zh.json?url';
@@ -136,12 +142,54 @@ export const geoJsonForMap = async (): Promise<
 
   return {
     type: 'FeatureCollection',
-    features: [...worldGeoJson.features, ...chinaGeojson.features] as Feature<
-      RPGeometry,
-      GeoJsonProperties
-    >[],
+    features: [
+      ...worldGeoJson.features.map((feature) => ({
+        ...feature,
+        properties: { ...feature.properties, boundary: 'country' },
+      })),
+      ...chinaGeojson.features.map((feature) => ({
+        ...feature,
+        properties: { ...feature.properties, boundary: 'province' },
+      })),
+    ] as Feature<RPGeometry, GeoJsonProperties>[],
   };
 };
+
+// Tiny polygons become subpixel at world scale. Add a marker only for compact
+// countries; the extent check also avoids misplaced centroids for overseas territories.
+export const smallCountryMarkers = (
+  boundaries: FeatureCollection<RPGeometry>
+): FeatureCollection<Point> => ({
+  type: 'FeatureCollection',
+  features: boundaries.features.flatMap((feature): Feature<Point>[] => {
+    if (
+      feature.properties?.boundary !== 'country' ||
+      feature.geometry.type === 'LineString'
+    )
+      return [];
+    const points: Position[] =
+      feature.geometry.type === 'Polygon'
+        ? feature.geometry.coordinates.flat()
+        : feature.geometry.coordinates.flat(2);
+    const longitudes = points.map((point) => point[0]);
+    const latitudes = points.map((point) => point[1]);
+    const west = Math.min(...longitudes),
+      east = Math.max(...longitudes);
+    const south = Math.min(...latitudes),
+      north = Math.max(...latitudes);
+    if (east - west > 1 || north - south > 1 || !points.length) return [];
+    return [
+      {
+        type: 'Feature',
+        properties: feature.properties,
+        geometry: {
+          type: 'Point',
+          coordinates: [(west + east) / 2, (south + north) / 2],
+        },
+      },
+    ];
+  }),
+});
 
 export const getBoundsForGeoData = (
   geoData: FeatureCollection<LineString>

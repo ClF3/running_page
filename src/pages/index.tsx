@@ -9,21 +9,18 @@ import {
 import { Analytics } from '@vercel/analytics/react';
 import { Helmet } from 'react-helmet-async';
 import Layout from '@/components/Layout';
-import LocationStat from '@/components/LocationStat';
+import DashboardSidebar from '@/components/DashboardSidebar';
 import RunMap from '@/components/RunMap';
 import RunTable from '@/components/RunTable';
 import SVGStat from '@/components/SVGStat';
 import WeeklyRunChart from '@/components/WeeklyRunChart';
-import YearsStat from '@/components/YearsStat';
 import useActivities from '@/hooks/useActivities';
-import getSiteMetadata from '@/hooks/useSiteMetadata';
 import { useInterval } from '@/hooks/useInterval';
-import { IS_CHINESE, LOADING_TEXT } from '@/utils/const';
+import { LOADING_TEXT } from '@/utils/const';
+import { filterLocationRuns, type PlaceNode } from '@/utils/locations';
 import {
   Activity,
   filterAndSortRuns,
-  filterCityRuns,
-  filterTitleRuns,
   filterYearRuns,
   scrollToMap,
   sortDateFunc,
@@ -105,7 +102,6 @@ type LocateActivityOptions = {
 };
 
 const Index = () => {
-  const { siteTitle, siteUrl } = getSiteMetadata();
   const { activities, thisYear, isComplete, loadAll, loadYear, yearForRunId } =
     useActivities();
   const themeChangeCounter = useThemeChangeCounter();
@@ -121,6 +117,7 @@ const Index = () => {
     func: (_run: Activity, _value: string) => boolean;
   }>({ item: thisYear, func: filterYearRuns });
   const [selectedWeekKey, setSelectedWeekKey] = useState<string | null>(null);
+  const [selectedPlace, setSelectedPlace] = useState<PlaceNode | undefined>();
 
   // Track if we're showing a single run from URL hash
   const singleRunId = useRunHashId();
@@ -237,6 +234,7 @@ const Index = () => {
 
       // default year
       setYear(y);
+      setSelectedPlace(undefined);
       setSelectedWeekKey(null);
 
       if ((viewState.zoom ?? 0) > 3 && bounds) {
@@ -252,16 +250,12 @@ const Index = () => {
     [viewState.zoom, bounds, changeByItem, loadAll, loadYear]
   );
 
-  const changeCity = useCallback(
-    (city: string) => {
-      changeByItem(city, 'City', filterCityRuns);
-    },
-    [changeByItem]
-  );
-
-  const changeTitle = useCallback(
-    (title: string) => {
-      changeByItem(title, 'Title', filterTitleRuns);
+  const selectPlace = useCallback(
+    (place: PlaceNode) => {
+      changeByItem(place.key, 'Place', filterLocationRuns);
+      setSelectedPlace(place);
+      setTitle(place.name);
+      setIsAnimating(false);
     },
     [changeByItem]
   );
@@ -360,6 +354,7 @@ const Index = () => {
     ) {
       const frameId = requestAnimationFrame(() => {
         setYear(targetYear);
+        setSelectedPlace(undefined);
         setCurrentFilter({ item: targetYear, func: filterYearRuns });
         setSelectedWeekKey(null);
       });
@@ -482,18 +477,13 @@ const Index = () => {
       </Helmet>
       <div className={styles.dashboard}>
         <aside className={styles.sidebar}>
-          <h1 className={styles.title}>
-            <a href={siteUrl}>{siteTitle}</a>
-          </h1>
-          {(viewState.zoom ?? 0) <= 3 && IS_CHINESE ? (
-            <LocationStat
-              changeYear={changeYear}
-              changeCity={changeCity}
-              changeTitle={changeTitle}
-            />
-          ) : (
-            <YearsStat year={year} onClick={changeYear} />
-          )}
+          <DashboardSidebar
+            runs={runs}
+            year={year}
+            selectedPlace={selectedPlace}
+            onChangeYear={changeYear}
+            onSelectPlace={selectPlace}
+          />
         </aside>
         <div className={styles.content} id="map-container">
           <RunMap
@@ -502,7 +492,7 @@ const Index = () => {
             geoData={animatedGeoData}
             setViewState={setViewState}
             changeYear={changeYear}
-            thisYear={year}
+            thisYear={selectedPlace ? '' : year}
             animationTrigger={animationTrigger}
           />
           {year === 'Total' && !isComplete ? (

@@ -44,6 +44,42 @@
   color: var(--color-primary);
 }
 
+.worldButton {
+  position: absolute;
+  top: 48px;
+  left: 14px;
+  padding: 0.35rem 0.6rem;
+  border: 1px solid
+    color-mix(in srgb, var(--color-run-table-thead) 20%, transparent);
+  border-radius: 0.35rem;
+  background: var(--color-background);
+  color: var(--color-run-table-thead);
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+.worldButton:hover {
+  color: var(--color-primary);
+}
+.footprintLegend {
+  position: absolute;
+  left: 14px;
+  bottom: 34px;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.3rem 0.5rem;
+  border-radius: 0.3rem;
+  background: var(--color-background);
+  color: var(--color-run-table-thead);
+  font-size: 0.7rem;
+  pointer-events: none;
+}
+.footprintLegend > span {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+}
+
 .runTitle {
   height: 29px;
   width: calc(100% - 160px);

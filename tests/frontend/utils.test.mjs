@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import path from 'node:path';
+import { readFileSync, readdirSync } from 'node:fs';
 import { after, before, test } from 'node:test';
 
 import { createServer } from 'vite';
@@ -34,6 +35,8 @@ let utils;
 let geoUtils;
 let activitiesHook;
 let weeklyRuns;
+let locations;
+let dashboardStats;
 
 const run = (overrides = {}) => ({
   run_id: 1,
@@ -75,6 +78,8 @@ before(async () => {
   geoUtils = await server.ssrLoadModule('/src/utils/geoUtils.ts');
   activitiesHook = await server.ssrLoadModule('/src/hooks/useActivities.ts');
   weeklyRuns = await server.ssrLoadModule('/src/utils/weeklyRuns.ts');
+  locations = await server.ssrLoadModule('/src/utils/locations.ts');
+  dashboardStats = await server.ssrLoadModule('/src/utils/dashboardStats.ts');
 });
 
 after(async () => {
@@ -205,6 +210,178 @@ const jsonResponse = (body) => ({
   ok: true,
   status: 200,
   json: async () => body,
+});
+
+test('places normalize country aliases and group municipality districts as one city', () => {
+  const activities = [
+    run({ location_country: '海淀区, 北京市, 100084, 中国' }),
+    run({ location_country: '朝阳区, 北京市, 中国' }),
+    run({ location_country: '公园, 南京市, 江苏省, 中国' }),
+    run({ location_country: 'Brussels, 1060, 比利时;比利時' }),
+    run({ location_country: 'Brussels, Belgium' }),
+    run({ location_country: '巴黎, 法國本土, 75001, 法国;法國' }),
+    run({ location_country: '海牙, 荷兰 / 荷蘭' }),
+    run({ location_country: '新加坡, 12345, 新加坡' }),
+    run({ location_country: '' }),
+  ];
+  const hierarchy = locations.buildLocationHierarchy(activities);
+  assert.equal(hierarchy.countryCount, 5);
+  assert.equal(hierarchy.provinceCount, 2);
+  assert.equal(hierarchy.cityCount, 2);
+  assert.equal(hierarchy.unlocatedCount, 1);
+  assert.equal(hierarchy.unlocatedDistanceMeters, 5000);
+  const china = hierarchy.countries.find(
+    (country) => country.countryCode === 'CN'
+  );
+  assert.equal(china.distanceMeters, 15000);
+  assert.equal(china.children[0].name, '北京市');
+  assert.equal(china.children[0].children[0].name, '北京市');
+  assert.equal(china.children[0].children[0].distanceMeters, 10000);
+  assert.equal(locations.filterLocationRuns(activities[0], china.key), true);
+  assert.equal(
+    locations.filterLocationRuns(activities[2], china.children[0].key),
+    false
+  );
+  assert.equal(locations.filterLocationRuns(activities[4], 'BE'), true);
+  assert.equal(
+    hierarchy.countries.find((country) => country.countryCode === 'BE')
+      .distanceMeters,
+    10000
+  );
+});
+
+test('place aggregation retains partially located mileage without counting unknown cities', () => {
+  const hierarchy = locations.buildLocationHierarchy([
+    run({ location_country: '辽宁省, 中国', distance: 1000 }),
+    run({ location_country: '东港市, 丹东市, 辽宁省, 中国', distance: 2000 }),
+    run({ location_country: '东港市, 辽宁省, 中国', distance: 3000 }),
+    run({ location_country: '中国', distance: 4000 }),
+  ]);
+  assert.equal(hierarchy.countryCount, 1);
+  assert.equal(hierarchy.provinceCount, 1);
+  assert.equal(hierarchy.cityCount, 2);
+  const china = hierarchy.countries[0];
+  assert.equal(china.distanceMeters, 10000);
+  assert.equal(
+    china.children.reduce((sum, province) => sum + province.distanceMeters, 0),
+    10000
+  );
+  assert.deepEqual(
+    china.children[0].children.map((city) => city.name),
+    ['东港市', '丹东市', '']
+  );
+  assert.equal(
+    china.children[0].children.reduce(
+      (sum, city) => sum + city.distanceMeters,
+      0
+    ),
+    6000
+  );
+});
+
+test('all visited countries in the real data match unique world map polygons', () => {
+  const root = path.resolve('src/static/activity_chunks');
+  const activities = readdirSync(root)
+    .filter((file) => /^year_.*\.json$/.test(file))
+    .flatMap((file) => JSON.parse(readFileSync(path.join(root, file), 'utf8')));
+  const world = JSON.parse(readFileSync('src/static/world.zh.json', 'utf8'));
+  const hierarchy = locations.buildLocationHierarchy(activities);
+  for (const country of hierarchy.countries) {
+    assert.equal(
+      world.features.filter(
+        (feature) => feature.properties.iso_a2 === country.countryCode
+      ).length,
+      1,
+      country.name
+    );
+  }
+  const totalDistance = activities.reduce(
+    (sum, activity) => sum + activity.distance,
+    0
+  );
+  const locatedDistance = hierarchy.countries.reduce(
+    (sum, country) => sum + country.distanceMeters,
+    0
+  );
+  assert.ok(
+    Math.abs(
+      totalDistance - locatedDistance - hierarchy.unlocatedDistanceMeters
+    ) < 0.001
+  );
+  assert.equal(
+    hierarchy.unlocatedCount,
+    activities.filter((activity) => !activity.location_country).length
+  );
+});
+
+test('dashboard summaries exclude missing sensors and count consecutive calendar days in scope', () => {
+  const summary = dashboardStats.summarizeDashboard([
+    run({
+      average_speed: 5,
+      distance: 6000,
+      average_heartrate: 160,
+      streak: 99,
+    }),
+    run({
+      start_date_local: '2026-01-01 18:00:00',
+      average_speed: 0,
+      average_heartrate: null,
+    }),
+    run({
+      start_date_local: '2026-01-02 08:00:00',
+      average_speed: 2.5,
+      distance: 3000,
+      average_heartrate: 140,
+    }),
+    run({
+      start_date_local: '2026-01-04 08:00:00',
+      average_speed: 0,
+      average_heartrate: 0,
+    }),
+  ]);
+  assert.equal(summary.runCount, 4);
+  assert.equal(summary.longestStreak, 2);
+  assert.equal(summary.heartRate, '150');
+  assert.equal(summary.pace, utils.formatPace(9000 / 2400));
+  const empty = dashboardStats.summarizeDashboard([]);
+  assert.equal(empty.pace, '—');
+  assert.equal(empty.heartRate, '—');
+  assert.equal(empty.longestStreak, 0);
+});
+
+test('tiny-country markers keep Singapore visible without using overseas territory centroids', () => {
+  const world = JSON.parse(readFileSync('src/static/world.zh.json', 'utf8'));
+  world.features.forEach((feature) => {
+    feature.properties.boundary = 'country';
+  });
+  const markers = geoUtils.smallCountryMarkers(world);
+  const singapore = markers.features.find(
+    (feature) => feature.properties.iso_a2 === 'SG'
+  );
+  assert.ok(singapore);
+  assert.ok(
+    singapore.geometry.coordinates[0] > 103 &&
+      singapore.geometry.coordinates[0] < 104
+  );
+  assert.ok(
+    singapore.geometry.coordinates[1] > 1 &&
+      singapore.geometry.coordinates[1] < 2
+  );
+  assert.equal(
+    markers.features.some((feature) => feature.properties.iso_a2 === 'FR'),
+    false
+  );
+  const metadata = JSON.parse(
+    readFileSync('src/static/country_names.json', 'utf8')
+  );
+  assert.deepEqual(
+    metadata,
+    world.features.map(({ properties }) => [
+      properties.iso_a2,
+      properties.name,
+      properties.full_name,
+    ])
+  );
 });
 
 test('activity loader fetches newest chunks first and merges loaded years', async (t) => {

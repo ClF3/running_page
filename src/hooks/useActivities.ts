@@ -3,6 +3,10 @@ import type { Activity } from '@/utils/utils';
 import { locationForRun, titleForRun } from '@/utils/utils';
 import manifestUrl from '@/static/activity_chunks/manifest.json?url';
 import { COUNTRY_STANDARDIZATION } from '@/static/city';
+import {
+  buildLocationHierarchy,
+  type LocationHierarchy,
+} from '@/utils/locations';
 
 interface ActivityChunkYear {
   year: string;
@@ -21,6 +25,7 @@ interface ActivityChunkManifest {
 
 interface ProcessedActivities {
   activities: Activity[];
+  locations: LocationHierarchy;
   years: string[];
   countries: string[];
   provinces: string[];
@@ -286,6 +291,7 @@ const processActivities = (
 
   return {
     activities: activityData,
+    locations: buildLocationHierarchy(activityData),
     years: yearsArray,
     countries: [...countries],
     provinces: [...provinces],

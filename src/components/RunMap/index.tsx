@@ -36,6 +36,7 @@ import {
   geoJsonForMap,
   getMapStyle,
   isTouchDevice,
+  smallCountryMarkers,
 } from '@/utils/geoUtils';
 import { RouteAnimator } from '@/utils/routeAnimation';
 import RunMarker from './RunMarker';
@@ -43,6 +44,7 @@ import RunMapButtons from './RunMapButtons';
 import styles from './style.module.css';
 import type { FeatureCollection } from 'geojson';
 import type { RPGeometry } from '@/static/run_countries';
+import type { FilterSpecification } from 'mapbox-gl';
 import './mapbox.css';
 import LightsControl from '@/components/RunMap/LightsControl';
 import { useMapTheme, useThemeChangeCounter } from '@/hooks/useTheme';
@@ -74,7 +76,7 @@ const RunMap = ({
   thisYear,
   animationTrigger,
 }: IRunMapProps) => {
-  const { countries, provinces } = useActivities();
+  const { locations, isComplete } = useActivities();
   const mapRef = useRef<MapRef>(null);
   const [lights, setLights] = useState(PRIVACY_MODE ? false : LIGHTS_ON);
   const [mapGeoData, setMapGeoData] =
@@ -85,7 +87,8 @@ const RunMap = ({
   // Use the map theme hook to get the current map theme
   const currentMapTheme = useMapTheme();
   // Listen for theme changes to update single run color
-  useThemeChangeCounter();
+  const theme = useThemeChangeCounter();
+  const countryColor = theme === 'light' ? '#946581' : COUNTRY_FILL_COLOR;
 
   // Get theme-aware single run color that updates when theme changes
   const singleRunColor = getRuntimeSingleRunColor();
@@ -220,17 +223,34 @@ const RunMap = ({
   const lastRouteKeyRef = useRef<string | null>(null);
 
   // Memoize filter arrays to prevent recreating them on every render
-  const filterProvinces = useMemo(() => {
-    const filtered = provinces.slice();
-    filtered.unshift('in', 'name');
-    return filtered;
-  }, [provinces]);
+  const filterProvinces = useMemo<FilterSpecification>(
+    () => [
+      'all',
+      ['==', 'boundary', 'province'],
+      [
+        'in',
+        'name',
+        ...(locations.countries
+          .find((country) => country.countryCode === 'CN')
+          ?.children.filter((province) => province.known)
+          .map((province) => province.name) ?? []),
+      ],
+    ],
+    [locations]
+  );
 
-  const filterCountries = useMemo(() => {
-    const filtered = countries.slice();
-    filtered.unshift('in', 'name');
-    return filtered;
-  }, [countries]);
+  const filterCountries = useMemo<FilterSpecification>(
+    () => [
+      'all',
+      ['==', 'boundary', 'country'],
+      [
+        'in',
+        'iso_a2',
+        ...locations.countries.map((country) => country.countryCode ?? ''),
+      ],
+    ],
+    [locations]
+  );
 
   // Apply layer visibility when lights setting changes
   useEffect(() => {
@@ -289,11 +309,15 @@ const RunMap = ({
     [lights, switchLayerVisibility]
   );
 
-  const initGeoDataLength = geoData.features.length;
   const isBigMap = (viewState.zoom ?? 0) <= 3;
+  const showBoundaries = (viewState.zoom ?? 0) <= 6;
+  const smallCountries = useMemo(
+    () => (mapGeoData ? smallCountryMarkers(mapGeoData) : null),
+    [mapGeoData]
+  );
 
   useEffect(() => {
-    if (isBigMap && IS_CHINESE && !mapGeoData && !isLoadingMapDataRef.current) {
+    if (showBoundaries && !mapGeoData && !isLoadingMapDataRef.current) {
       isLoadingMapDataRef.current = true;
       geoJsonForMap()
         .then((data) => {
@@ -306,18 +330,7 @@ const RunMap = ({
           isLoadingMapDataRef.current = false;
         });
     }
-  }, [isBigMap, mapGeoData]);
-
-  let combinedGeoData = geoData;
-  if (isBigMap && IS_CHINESE && mapGeoData) {
-    // Show boundary and line together, combine geoData(only when not combine yet)
-    if (geoData.features.length === initGeoDataLength) {
-      combinedGeoData = {
-        type: 'FeatureCollection',
-        features: geoData.features.concat(mapGeoData.features),
-      };
-    }
-  }
+  }, [showBoundaries, mapGeoData]);
 
   // Memoize expensive calculations
   const { isSingleRun, startLon, startLat, endLon, endLat, isIndoorRun } =
@@ -469,25 +482,33 @@ const RunMap = ({
         </div>
       )}
       <RunMapButtons changeYear={changeYear} thisYear={thisYear} />
-      <Source id="data" type="geojson" data={combinedGeoData}>
-        <Layer
-          id="province"
-          type="fill"
-          paint={{
-            'fill-color': PROVINCE_FILL_COLOR,
-          }}
-          filter={filterProvinces}
-        />
-        <Layer
-          id="countries"
-          type="fill"
-          paint={{
-            'fill-color': COUNTRY_FILL_COLOR,
-            // in China, fill a bit lighter while already filled provinces
-            'fill-opacity': ['case', ['==', ['get', 'name'], '中国'], 0.1, 0.5],
-          }}
-          filter={filterCountries}
-        />
+      <button
+        type="button"
+        className={styles.worldButton}
+        onClick={() => {
+          mapRef.current?.fitBounds(
+            [
+              [-170, -55],
+              [180, 75],
+            ],
+            {
+              padding: { top: 65, bottom: 40, left: 20, right: 40 },
+              duration: 900,
+            }
+          );
+        }}
+      >
+        {IS_CHINESE ? '世界足迹' : 'World footprints'}
+      </button>
+      {showBoundaries && lights && (
+        <div className={styles.footprintLegend}>
+          <span style={{ background: countryColor }} />
+          {IS_CHINESE
+            ? `跑过 ${locations.countryCount} 个国家 · ${isComplete ? '全部年份' : '加载中…'}`
+            : `${locations.countryCount} countries · ${isComplete ? 'All years' : 'Loading…'}`}
+        </div>
+      )}
+      <Source id="data" type="geojson" data={geoData}>
         <Layer
           id="runs2"
           type="line"
@@ -523,6 +544,87 @@ const RunMap = ({
           filter={['==', ['get', 'indoor'], true]}
         />
       </Source>
+      {mapGeoData && (
+        <Source id="boundaries" type="geojson" data={mapGeoData}>
+          <Layer
+            id="countries"
+            beforeId="runs2"
+            type="fill"
+            maxzoom={6}
+            layout={{ visibility: lights ? 'visible' : 'none' }}
+            paint={{
+              'fill-color': countryColor,
+              'fill-opacity': [
+                'interpolate',
+                ['linear'],
+                ['zoom'],
+                2,
+                0.48,
+                4,
+                0.16,
+                6,
+                0.06,
+              ],
+            }}
+            filter={filterCountries}
+          />
+          <Layer
+            id="country-outlines"
+            beforeId="runs2"
+            type="line"
+            maxzoom={6}
+            layout={{ visibility: lights ? 'visible' : 'none' }}
+            paint={{
+              'line-color': countryColor,
+              'line-width': 1.5,
+              'line-opacity': 0.8,
+            }}
+            filter={filterCountries}
+          />
+          <Layer
+            id="province"
+            beforeId="runs2"
+            type="fill"
+            minzoom={3}
+            maxzoom={7}
+            layout={{ visibility: lights ? 'visible' : 'none' }}
+            paint={{
+              'fill-color': PROVINCE_FILL_COLOR,
+              'fill-opacity': [
+                'interpolate',
+                ['linear'],
+                ['zoom'],
+                3,
+                0,
+                4,
+                0.3,
+                6,
+                0.15,
+                7,
+                0,
+              ],
+            }}
+            filter={filterProvinces}
+          />
+        </Source>
+      )}
+      {smallCountries && (
+        <Source id="small-countries" type="geojson" data={smallCountries}>
+          <Layer
+            id="small-country-points"
+            type="circle"
+            maxzoom={3}
+            layout={{ visibility: lights ? 'visible' : 'none' }}
+            paint={{
+              'circle-radius': 4,
+              'circle-color': countryColor,
+              'circle-stroke-color': '#262c32',
+              'circle-stroke-width': 1,
+            }}
+            filter={filterCountries}
+          />
+        </Source>
+      )}
       {isSingleRun && animatedPoints.length > 0 && (
         <Source
           id="animated-run"
