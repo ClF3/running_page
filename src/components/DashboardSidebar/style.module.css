@@ -77,9 +77,7 @@
 .metrics > div {
   position: relative;
   padding: 0.9rem 0;
-}
-.metrics > div:nth-child(even) {
-  padding-left: 1.1rem;
+  text-align: center;
 }
 .metrics > div:nth-child(even)::before {
   position: absolute;
@@ -99,6 +97,7 @@
 .metrics dd {
   display: flex;
   align-items: baseline;
+  justify-content: center;
   gap: 0.35rem;
   margin: 0.15rem 0 0;
 }
