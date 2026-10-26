@@ -7,7 +7,7 @@
 }
 .identity {
   container-type: inline-size;
-  margin-bottom: 1.25rem;
+  margin-bottom: 2.25rem;
 }
 .identity h1 {
   margin: 0;
@@ -116,8 +116,8 @@
   font-size: 0.875rem;
 }
 .locations {
-  margin-top: 1.35rem;
-  padding-top: 1.35rem;
+  margin-top: 1.85rem;
+  padding-top: 1.85rem;
   border-top: 1px solid var(--line);
 }
 .coverage {
