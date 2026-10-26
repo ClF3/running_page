@@ -1,27 +1,23 @@
-import Stat from '@/components/Stat';
 import useActivities from '@/hooks/useActivities';
+import styles from './style.module.css';
 
 // only support China for now
 const LocationSummary = () => {
   const { years, countries, provinces, cities } = useActivities();
   return (
-    <div className="cursor-pointer">
-      <section>
-        {years ? (
-          <Stat value={`${years.length}`} description=" 年里我跑过" />
-        ) : null}
-        {countries ? (
-          <Stat value={countries.length} description=" 个国家" />
-        ) : null}
-        {provinces ? (
-          <Stat value={provinces.length} description=" 个省份" />
-        ) : null}
-        {cities ? (
-          <Stat value={Object.keys(cities).length} description=" 个城市" />
-        ) : null}
-      </section>
-      <hr />
-    </div>
+    <dl className={styles.summary}>
+      {[
+        [years.length, '年里我跑过'],
+        [countries.length, '个国家'],
+        [provinces.length, '个省份'],
+        [Object.keys(cities).length, '个城市'],
+      ].map(([value, label]) => (
+        <div key={label} className={styles.metric}>
+          <dt>{label}</dt>
+          <dd>{value}</dd>
+        </div>
+      ))}
+    </dl>
   );
 };
 

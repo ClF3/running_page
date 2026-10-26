@@ -40,6 +40,7 @@ const RunRow = ({
 
   return (
     <tr
+      aria-selected={runIndex === elementIndex}
       className={`${styles.runRow} ${runIndex === elementIndex ? styles.selected : ''}`}
       key={run.start_date_local}
       onClick={handleClick}

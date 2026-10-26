@@ -31,9 +31,8 @@ const MAP_LAYER_LIST = [
 const USE_DASH_LINE = true;
 // styling: route line opacity: [0, 1]
 const LINE_OPACITY = 0.4;
-// styling: map height - responsive design
-// Use smaller height on mobile devices for better user experience
-const MAP_HEIGHT = window.innerWidth <= 768 ? 250 : 600;
+// The dashboard controls map height through CSS, including viewport resizing.
+const MAP_HEIGHT = 'var(--run-map-height, 400px)';
 //set to `false` if you want to hide the road label characters
 const ROAD_LABEL_DISPLAY = true;
 // updated on 2024/11/17: privacy mode is set to true by default

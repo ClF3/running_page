@@ -1,0 +1,98 @@
+.intro {
+  color: var(--color-run-date);
+  font-size: 0.9rem;
+  line-height: 1.7;
+}
+
+.summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+  padding: 1rem 0;
+}
+
+.metric {
+  display: flex;
+  flex-direction: column-reverse;
+}
+
+.metric dd {
+  font-family: var(--font-mono);
+  font-size: 1.75rem;
+  font-weight: 600;
+}
+
+.metric dt,
+.heading span,
+.cityButton > span:last-child,
+.periods span {
+  color: var(--color-run-date);
+  font-size: 0.8rem;
+  font-weight: 400;
+}
+
+.cities,
+.periods {
+  padding: 1rem 0;
+  border-top: 1px solid
+    color-mix(in srgb, var(--color-run-table-thead) 22%, transparent);
+}
+
+.heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.cityList {
+  display: grid;
+  gap: 0.125rem;
+}
+
+.cityButton {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.5rem;
+  padding: 0.4rem 0.25rem;
+  text-align: left;
+  font-size: 0.95rem;
+  cursor: pointer;
+  border-radius: 0.25rem;
+}
+
+.cityButton:hover,
+.periods button:hover {
+  background: var(--color-run-row-hover-background);
+}
+
+.toggle {
+  margin-top: 0.5rem;
+  padding: 0.4rem 0.25rem;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.periods {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.periods button {
+  padding: 0.3rem 0.5rem;
+  font-size: 0.8rem;
+  cursor: pointer;
+  border-radius: 0.25rem;
+}
+
+.cityButton:focus-visible,
+.toggle:focus-visible,
+.periods button:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}

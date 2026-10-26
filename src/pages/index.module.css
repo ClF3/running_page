@@ -1,0 +1,35 @@
+.dashboard {
+  display: grid;
+  gap: 1.5rem;
+  align-items: start;
+}
+
+.sidebar,
+.content {
+  min-width: 0;
+}
+
+.title {
+  margin: 0 0 1.5rem;
+  font-size: clamp(2rem, 3vw, 2.5rem);
+  font-weight: 800;
+  font-style: italic;
+  line-height: 1.15;
+  text-wrap: balance;
+}
+
+.content {
+  --run-map-height: 280px;
+  scroll-margin-top: 1.5rem;
+}
+
+@media (min-width: 1024px) {
+  .dashboard {
+    grid-template-columns: 17rem minmax(0, 1fr);
+    gap: clamp(1.5rem, 3vw, 3rem);
+  }
+
+  .content {
+    --run-map-height: clamp(280px, 40vh, 440px);
+  }
+}

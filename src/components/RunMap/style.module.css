@@ -46,7 +46,7 @@
 
 .runTitle {
   height: 29px;
-  width: 710px;
+  width: calc(100% - 160px);
   position: absolute;
   bottom: 0px;
   left: 120px;

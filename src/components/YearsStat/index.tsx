@@ -1,7 +1,8 @@
 import { useMemo } from 'react';
 import YearStat from '@/components/YearStat';
 import useActivities from '@/hooks/useActivities';
-import { INFO_MESSAGE } from '@/utils/const';
+import { INFO_MESSAGE, IS_CHINESE } from '@/utils/const';
+import styles from './style.module.css';
 
 const YearsStat = ({
   year,
@@ -28,17 +29,19 @@ const YearsStat = ({
 
   // for short solution need to refactor
   return (
-    <div className="w-full pr-16 pb-16 lg:w-full lg:pr-16">
-      <section className="pb-0">
-        <p className="leading-relaxed">
-          {infoMessage}
-          <br />
-        </p>
-      </section>
-      <hr />
-      {yearsArrayUpdate.map((yearItem) => (
-        <YearStat key={yearItem} year={yearItem} onClick={onClick} />
-      ))}
+    <div>
+      <p className={styles.intro}>{infoMessage}</p>
+      <YearStat key={year} year={year} onClick={onClick} />
+      <details className={styles.history}>
+        <summary>
+          {IS_CHINESE ? '其他年份与累计' : 'Other years & all time'}
+        </summary>
+        {yearsArrayUpdate
+          .filter((yearItem) => yearItem !== year)
+          .map((yearItem) => (
+            <YearStat key={yearItem} year={yearItem} onClick={onClick} />
+          ))}
+      </details>
     </div>
   );
 };

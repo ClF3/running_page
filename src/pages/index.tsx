@@ -37,6 +37,7 @@ import {
 } from '@/utils/geoUtils';
 import { useTheme, useThemeChangeCounter } from '@/hooks/useTheme';
 import { getActivityWeekKey } from '@/utils/weeklyRuns';
+import styles from './index.module.css';
 
 const HASH_RUN_CHANGE_EVENT = 'running-page-hash-run-change';
 const SVG_CLICK_TARGET_SELECTOR =
@@ -346,19 +347,28 @@ const Index = () => {
     }
 
     void loadYear(targetYear);
+    const targetRun = activities.find((run) => run.run_id === singleRunId);
+    const isOutsideSelectedWeek =
+      selectedWeekKey !== null &&
+      targetRun &&
+      getActivityWeekKey(targetRun) !== selectedWeekKey;
     if (
       year !== targetYear ||
       currentFilter.item !== targetYear ||
-      currentFilter.func !== filterYearRuns
+      currentFilter.func !== filterYearRuns ||
+      isOutsideSelectedWeek
     ) {
       const frameId = requestAnimationFrame(() => {
         setYear(targetYear);
         setCurrentFilter({ item: targetYear, func: filterYearRuns });
+        setSelectedWeekKey(null);
       });
       return () => cancelAnimationFrame(frameId);
     }
   }, [
     singleRunId,
+    activities,
+    selectedWeekKey,
     year,
     currentFilter.item,
     currentFilter.func,
@@ -470,53 +480,55 @@ const Index = () => {
       <Helmet>
         <html lang="en" data-theme={theme} />
       </Helmet>
-      <div className="w-full lg:w-1/3">
-        <h1 className="my-12 mt-6 text-5xl font-extrabold italic">
-          <a href={siteUrl}>{siteTitle}</a>
-        </h1>
-        {(viewState.zoom ?? 0) <= 3 && IS_CHINESE ? (
-          <LocationStat
-            changeYear={changeYear}
-            changeCity={changeCity}
-            changeTitle={changeTitle}
-          />
-        ) : (
-          <YearsStat year={year} onClick={changeYear} />
-        )}
-      </div>
-      <div className="w-full lg:w-2/3" id="map-container">
-        <RunMap
-          title={title}
-          viewState={viewState}
-          geoData={animatedGeoData}
-          setViewState={setViewState}
-          changeYear={changeYear}
-          thisYear={year}
-          animationTrigger={animationTrigger}
-        />
-        {year === 'Total' && !isComplete ? (
-          <div className="text-center">{LOADING_TEXT}</div>
-        ) : year === 'Total' ? (
-          <SVGStat />
-        ) : (
-          <>
-            {isYearView && (
-              <WeeklyRunChart
-                runs={runs}
-                selectedWeekKey={selectedWeekKey}
-                onSelectWeek={selectWeek}
-                year={year}
-              />
-            )}
-            <RunTable
-              runs={tableRuns}
-              sourceRuns={runs}
-              locateActivity={locateActivity}
-              runIndex={runIndex}
-              setRunIndex={setRunIndex}
+      <div className={styles.dashboard}>
+        <aside className={styles.sidebar}>
+          <h1 className={styles.title}>
+            <a href={siteUrl}>{siteTitle}</a>
+          </h1>
+          {(viewState.zoom ?? 0) <= 3 && IS_CHINESE ? (
+            <LocationStat
+              changeYear={changeYear}
+              changeCity={changeCity}
+              changeTitle={changeTitle}
             />
-          </>
-        )}
+          ) : (
+            <YearsStat year={year} onClick={changeYear} />
+          )}
+        </aside>
+        <div className={styles.content} id="map-container">
+          <RunMap
+            title={title}
+            viewState={viewState}
+            geoData={animatedGeoData}
+            setViewState={setViewState}
+            changeYear={changeYear}
+            thisYear={year}
+            animationTrigger={animationTrigger}
+          />
+          {year === 'Total' && !isComplete ? (
+            <div className="text-center">{LOADING_TEXT}</div>
+          ) : year === 'Total' ? (
+            <SVGStat />
+          ) : (
+            <>
+              {isYearView && (
+                <WeeklyRunChart
+                  runs={runs}
+                  selectedWeekKey={selectedWeekKey}
+                  onSelectWeek={selectWeek}
+                  year={year}
+                />
+              )}
+              <RunTable
+                runs={tableRuns}
+                sourceRuns={runs}
+                locateActivity={locateActivity}
+                runIndex={runIndex}
+                setRunIndex={setRunIndex}
+              />
+            </>
+          )}
+        </div>
       </div>
       {/* Enable Audiences in Vercel Analytics: https://vercel.com/docs/concepts/analytics/audiences/quickstart */}
       {import.meta.env.VERCEL && <Analytics />}

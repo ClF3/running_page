@@ -1,5 +1,4 @@
 import { lazy, Suspense } from 'react';
-import Stat from '@/components/Stat';
 import useActivities from '@/hooks/useActivities';
 import type { Activity } from '@/utils/utils';
 import { formatPace } from '@/utils/utils';
@@ -8,6 +7,7 @@ import { yearStats, githubYearStats } from '@assets/index';
 import { loadSvgComponent } from '@/utils/svgUtils';
 import { SHOW_ELEVATION_GAIN } from '@/utils/const';
 import { DIST_UNIT, M_TO_DIST, M_TO_ELEV } from '@/utils/utils';
+import styles from './style.module.css';
 
 const yearSvgs = Object.fromEntries(
   Object.keys(yearStats).map((path) => [
@@ -154,29 +154,35 @@ const YearStat = ({
   };
 
   return (
-    <div className="cursor-pointer" onClick={handleClick}>
+    <div className={styles.yearStat}>
       <section {...eventHandlers}>
-        <Stat value={year} description=" Journey" />
-        {shouldShowSummary && summary && (
-          <>
-            <Stat value={summary.runCount} description=" Runs" />
-            <Stat value={summary.totalDistance} description={` ${DIST_UNIT}`} />
-            {SHOW_ELEVATION_GAIN && (
-              <Stat
-                value={summary.totalElevationGain}
-                description=" Elevation Gain"
-              />
-            )}
-            <Stat value={summary.averagePace} description=" Avg Pace" />
-            <Stat value={`${summary.streak} day`} description=" Streak" />
-            {summary.hasHeartRate && (
-              <Stat
-                value={summary.averageHeartRate}
-                description=" Avg Heart Rate"
-              />
-            )}
-          </>
-        )}
+        <button type="button" className={styles.summary} onClick={handleClick}>
+          <span className={styles.yearLabel}>
+            <strong>{year}</strong>
+            <span>Journey</span>
+          </span>
+          {shouldShowSummary && summary && (
+            <span className={styles.metrics}>
+              {[
+                [summary.runCount.toLocaleString(), 'Runs'],
+                [summary.totalDistance.toLocaleString(), DIST_UNIT],
+                ...(SHOW_ELEVATION_GAIN
+                  ? [[summary.totalElevationGain, 'Elevation Gain']]
+                  : []),
+                [summary.averagePace, 'Avg Pace'],
+                [`${summary.streak} day`, 'Streak'],
+                ...(summary.hasHeartRate
+                  ? [[summary.averageHeartRate, 'Avg Heart Rate']]
+                  : []),
+              ].map(([value, label]) => (
+                <span key={label} className={styles.metric}>
+                  <strong>{value}</strong>
+                  <span>{label}</span>
+                </span>
+              ))}
+            </span>
+          )}
+        </button>
       </section>
       {shouldShowSummary &&
         year !== 'Total' &&
@@ -188,7 +194,6 @@ const YearStat = ({
             <GithubYearSVG className="github-year-svg my-4 h-auto w-full border-0 p-0" />
           </Suspense>
         )}
-      <hr />
     </div>
   );
 };

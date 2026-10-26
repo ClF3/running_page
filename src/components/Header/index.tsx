@@ -53,11 +53,11 @@ const Header = () => {
 
   return (
     <>
-      <nav className="mx-auto mt-12 flex w-full max-w-screen-2xl min-w-max items-center justify-between pl-6 lg:px-16">
+      <nav className="mx-auto mt-6 flex w-full max-w-screen-2xl items-center justify-between px-4 lg:px-10">
         <div className="w-1/4">
           <Link to={siteUrl}>
             <picture>
-              <img className="h-16 w-16 rounded-full" alt="logo" src={logo} />
+              <img className="h-12 w-12 rounded-full" alt="logo" src={logo} />
             </picture>
           </Link>
         </div>
