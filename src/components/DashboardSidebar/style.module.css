@@ -1,10 +1,5 @@
 .root {
-  --line: color-mix(in srgb, var(--color-run-table-thead) 17%, transparent);
-  --panel: color-mix(
-    in srgb,
-    var(--color-run-table-thead) 5%,
-    var(--color-background)
-  );
+  --line: color-mix(in srgb, var(--color-run-table-thead) 13%, transparent);
   color: var(--color-run-table-thead);
   font-family: var(--font-sans);
   font-style: normal;
@@ -43,21 +38,15 @@
 }
 .scope select {
   max-width: 65%;
-  border: 1px solid var(--line);
-  border-radius: 0.4rem;
-  padding: 0.35rem 0.55rem;
-  background: var(--color-background);
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  padding: 0.35rem 0.2rem;
+  background: transparent;
   color: inherit;
 }
 .hero {
-  padding: 1rem 1.1rem;
-  border: 1px solid color-mix(in srgb, var(--color-primary) 24%, transparent);
-  border-radius: 0.65rem;
-  background: color-mix(
-    in srgb,
-    var(--color-primary) 6%,
-    var(--color-background)
-  );
+  padding: 0.35rem 0 1.15rem;
 }
 .hero p {
   margin: 0;
@@ -82,14 +71,26 @@
 .metrics {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.55rem;
-  margin: 0.55rem 0 0;
+  margin: 0;
+  border-top: 1px solid var(--line);
 }
 .metrics > div {
-  padding: 0.7rem 0.8rem;
-  border: 1px solid var(--line);
-  border-radius: 0.5rem;
-  background: var(--panel);
+  position: relative;
+  padding: 0.9rem 0;
+}
+.metrics > div:nth-child(even) {
+  padding-left: 1.1rem;
+}
+.metrics > div:nth-child(even)::before {
+  position: absolute;
+  top: 0.95rem;
+  bottom: 0.95rem;
+  left: 0;
+  border-left: 1px solid var(--line);
+  content: '';
+}
+.metrics > div:nth-child(n + 3) {
+  border-top: 1px solid var(--line);
 }
 .metrics dt {
   font-size: 0.875rem;
@@ -110,19 +111,19 @@
   font-size: 0.875rem;
 }
 .locations {
-  margin-top: 1.35rem;
+  margin-top: 0.35rem;
   padding-top: 1.1rem;
   border-top: 1px solid var(--line);
 }
 .coverage {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  margin: 0 0 0.6rem;
-  padding: 0.65rem 0;
-  border-radius: 0.5rem;
-  background: var(--panel);
+  margin: 0 0 0.3rem;
+  padding: 0.25rem 0 0.95rem;
+  border-bottom: 1px solid var(--line);
 }
 .coverage > div {
+  padding: 0 0.2rem;
   text-align: center;
 }
 .coverage > div + div {
