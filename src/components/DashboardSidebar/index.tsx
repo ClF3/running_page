@@ -99,18 +99,10 @@ const DashboardSidebar = ({
   const { years, locations } = useActivities();
   const stats = useMemo(() => summarizeDashboard(runs), [runs]);
   const metrics = [
-    [
-      label('运动次数', 'Activities'),
-      stats.runCount.toLocaleString(),
-      label('次', 'runs'),
-    ],
-    [label('平均配速', 'Average pace'), stats.pace, `/${DIST_UNIT}`],
-    [
-      label('最长连续', 'Longest streak'),
-      stats.longestStreak,
-      label('天', 'days'),
-    ],
-    [label('平均心率', 'Average heart rate'), stats.heartRate, 'bpm'],
+    ['Activities', stats.runCount.toLocaleString(), 'runs'],
+    ['Avg. Pace', stats.pace, `/${DIST_UNIT}`],
+    ['Longest Streak', stats.longestStreak, 'days'],
+    ['Avg. Heart Rate', stats.heartRate, 'bpm'],
     ...(SHOW_ELEVATION_GAIN
       ? [
           [
@@ -131,11 +123,7 @@ const DashboardSidebar = ({
         <p className={styles.motto}>{CHINESE_LOCATION_INFO_MESSAGE}</p>
       </header>
       <div className={styles.scope}>
-        <span>
-          {selectedPlace
-            ? label('地点统计', 'Place summary')
-            : label('年度统计', 'Year summary')}
-        </span>
+        <span>{selectedPlace ? 'Place Stats' : 'Yearly Stats'}</span>
         <select
           aria-label={label('统计范围', 'Summary scope')}
           value={selectedPlace ? '' : year}
@@ -154,11 +142,8 @@ const DashboardSidebar = ({
           <option value="Total">{label('全部年份', 'All years')}</option>
         </select>
       </div>
-      <section
-        className={styles.hero}
-        aria-label={label('总里程', 'Total distance')}
-      >
-        <p>{label('总里程', 'Total distance')}</p>
+      <section className={styles.hero} aria-label="Total Distance">
+        <p>Total Distance</p>
         <div className={styles.distance}>
           <strong>{distance(stats.distanceMeters)}</strong>
           <span>{DIST_UNIT}</span>
