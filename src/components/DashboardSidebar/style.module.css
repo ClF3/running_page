@@ -24,7 +24,7 @@
 }
 .motto {
   margin: 0.5rem 0 0;
-  font-size: 0.9rem;
+  font-size: 1.025rem;
   line-height: 1.5;
   color: var(--color-run-date);
 }
@@ -34,11 +34,11 @@
   justify-content: space-between;
   gap: 0.75rem;
   margin-bottom: 0.75rem;
-  font-size: 0.85rem;
+  font-size: 0.975rem;
 }
 .scope h2 {
   margin: 0;
-  font-size: 0.95rem;
+  font-size: 1.075rem;
   font-weight: 600;
 }
 .scope select {
@@ -61,7 +61,7 @@
 }
 .hero p {
   margin: 0;
-  font-size: 0.8rem;
+  font-size: 0.925rem;
   color: var(--color-run-date);
 }
 .distance {
@@ -77,7 +77,7 @@
   letter-spacing: -0.035em;
 }
 .distance span {
-  font-size: 1rem;
+  font-size: 1.125rem;
 }
 .metrics {
   display: grid;
@@ -92,7 +92,7 @@
   background: var(--panel);
 }
 .metrics dt {
-  font-size: 0.75rem;
+  font-size: 0.875rem;
   color: var(--color-run-date);
 }
 .metrics dd {
@@ -107,7 +107,7 @@
   line-height: 1.25;
 }
 .metrics dd span {
-  font-size: 0.75rem;
+  font-size: 0.875rem;
 }
 .locations {
   margin-top: 1.35rem;
@@ -136,7 +136,7 @@
 }
 .coverage dt {
   margin-top: 0.15rem;
-  font-size: 0.7rem;
+  font-size: 0.825rem;
   color: var(--color-run-date);
 }
 .placeList {
@@ -164,7 +164,7 @@
   color: inherit;
   cursor: pointer;
   text-align: left;
-  font-size: 0.85rem;
+  font-size: 0.975rem;
 }
 .placeRow::before {
   content: '›';
@@ -188,10 +188,10 @@ details[open] > .placeRow::before {
 }
 .placeDistance {
   white-space: nowrap;
-  font-size: 0.85rem;
+  font-size: 0.975rem;
 }
 .placeDistance small {
-  font-size: 0.65rem;
+  font-size: 0.775rem;
   color: var(--color-run-date);
 }
 .placeChildren {
@@ -201,7 +201,7 @@ details[open] > .placeRow::before {
 }
 .viewRecords {
   padding: 0.2rem 0.2rem 0.4rem;
-  font-size: 0.7rem;
+  font-size: 0.825rem;
   color: var(--color-run-date);
   text-align: left;
 }
