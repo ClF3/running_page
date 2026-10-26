@@ -18,6 +18,7 @@ import useActivities from '@/hooks/useActivities';
 import { useInterval } from '@/hooks/useInterval';
 import { LOADING_TEXT } from '@/utils/const';
 import { filterLocationRuns, type PlaceNode } from '@/utils/locations';
+import { getPlaceDisplayName } from '@/utils/placeNames';
 import {
   Activity,
   filterAndSortRuns,
@@ -254,7 +255,7 @@ const Index = () => {
     (place: PlaceNode) => {
       changeByItem(place.key, 'Place', filterLocationRuns);
       setSelectedPlace(place);
-      setTitle(place.name);
+      setTitle(getPlaceDisplayName(place));
       setIsAnimating(false);
     },
     [changeByItem]

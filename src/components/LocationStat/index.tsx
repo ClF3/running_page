@@ -1,5 +1,5 @@
 import YearStat from '@/components/YearStat';
-import { CHINESE_LOCATION_INFO_MESSAGE } from '@/utils/const';
+import { SITE_MOTTO } from '@/utils/const';
 import CitiesStat from './CitiesStat';
 import LocationSummary from './LocationSummary';
 import PeriodStat from './PeriodStat';
@@ -17,7 +17,7 @@ const LocationStat = ({
   changeTitle,
 }: ILocationStatProps) => (
   <div>
-    <p className={styles.intro}>{CHINESE_LOCATION_INFO_MESSAGE}</p>
+    <p className={styles.intro}>{SITE_MOTTO}</p>
     <LocationSummary />
     <CitiesStat onClick={changeCity} />
     <PeriodStat onClick={changeTitle} />

@@ -4,6 +4,7 @@ import {
   RUN_TITLES,
   ACTIVITY_TYPES,
   RICH_TITLE,
+  IS_CHINESE,
 } from './const';
 
 export type Coordinate = [number, number];
@@ -42,7 +43,10 @@ const titleForShow = (run: Activity): string => {
     name = 'run';
   }
   if (run.name) {
-    name = run.name;
+    name =
+      !IS_CHINESE && /\p{Script=Han}/u.test(run.name)
+        ? titleForRun(run)
+        : run.name;
   }
   return `${name} ${date} ${distance} ${DIST_UNIT} ${
     !run.summary_polyline ? '(No map data for this run)' : ''

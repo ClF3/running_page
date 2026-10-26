@@ -46,8 +46,8 @@ const SHOW_ELEVATION_GAIN = false;
 // richer title for the activity types (like garmin style)
 const RICH_TITLE = false;
 
-// IF you are outside China please make sure IS_CHINESE = false
-const IS_CHINESE = true;
+// Display language; location parsing and country highlights work in either language.
+const IS_CHINESE = false;
 const USE_ANIMATION_FOR_GRID = false;
 const CHINESE_INFO_MESSAGE = (yearLength: number, year: string): string => {
   const yearStr = year === 'Total' ? '所有' : ` ${year} `;
@@ -56,8 +56,7 @@ const CHINESE_INFO_MESSAGE = (yearLength: number, year: string): string => {
 const ENGLISH_INFO_MESSAGE = (yearLength: number, year: string): string =>
   `Running Journey with ${yearLength} Years, the table shows year ${year} data`;
 
-// English is not supported for location info messages yet
-const CHINESE_LOCATION_INFO_MESSAGE = '至少在这一刻，热爱不问为何！';
+const SITE_MOTTO = 'To run is to live!';
 
 const INFO_MESSAGE = IS_CHINESE ? CHINESE_INFO_MESSAGE : ENGLISH_INFO_MESSAGE;
 const FULL_MARATHON_RUN_TITLE = IS_CHINESE ? '全程马拉松' : 'Full Marathon';
@@ -137,7 +136,7 @@ const ACTIVITY_TOTAL = {
 };
 
 export {
-  CHINESE_LOCATION_INFO_MESSAGE,
+  SITE_MOTTO,
   MAPBOX_TOKEN,
   MUNICIPALITY_CITIES_ARR,
   MAP_LAYER_LIST,

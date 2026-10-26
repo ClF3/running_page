@@ -37,6 +37,7 @@ let activitiesHook;
 let weeklyRuns;
 let locations;
 let dashboardStats;
+let placeNames;
 
 const run = (overrides = {}) => ({
   run_id: 1,
@@ -80,6 +81,7 @@ before(async () => {
   weeklyRuns = await server.ssrLoadModule('/src/utils/weeklyRuns.ts');
   locations = await server.ssrLoadModule('/src/utils/locations.ts');
   dashboardStats = await server.ssrLoadModule('/src/utils/dashboardStats.ts');
+  placeNames = await server.ssrLoadModule('/src/utils/placeNames.ts');
 });
 
 after(async () => {
@@ -126,9 +128,17 @@ test('activity filters and sorting mirror the page contract', () => {
 });
 
 test('title generation falls back to distance and time-of-day labels', () => {
-  assert.equal(utils.titleForRun(run()), '清晨跑步');
-  assert.equal(utils.titleForRun(run({ distance: 21_500 })), '半程马拉松');
-  assert.equal(utils.titleForRun(run({ distance: 42_500 })), '全程马拉松');
+  assert.equal(utils.titleForRun(run()), 'Morning Run');
+  assert.equal(utils.titleForRun(run({ distance: 21_500 })), 'Half Marathon');
+  assert.equal(utils.titleForRun(run({ distance: 42_500 })), 'Full Marathon');
+  assert.match(
+    utils.titleForShow(run({ name: '海淀区 跑步' })),
+    /^Morning Run /
+  );
+  assert.match(
+    utils.titleForShow(run({ name: 'Haidian Running' })),
+    /^Haidian Running /
+  );
 });
 
 test('geo utilities decode routes and produce route feature collections', () => {
@@ -203,6 +213,12 @@ test('weekly run summaries group activities by monday-starting weeks', () => {
   assert.equal(
     weeklyRuns.formatDurationCompact(activeWeeks[0].movingSeconds),
     '1h30m'
+  );
+  assert.equal(weeklyRuns.formatMonthLabel(0), 'Jan');
+  assert.equal(weeklyRuns.formatMonthLabel(11), 'Dec');
+  assert.equal(
+    weeks.some((week) => /\p{Script=Han}/u.test(week.monthLabel ?? '')),
+    false
   );
 });
 
@@ -295,6 +311,14 @@ test('all visited countries in the real data match unique world map polygons', (
       country.name
     );
   }
+  const verifyEnglishNames = (nodes) => {
+    for (const node of nodes) {
+      const label = placeNames.getPlaceDisplayName(node);
+      assert.equal(/\p{Script=Han}/u.test(label), false, node.name);
+      verifyEnglishNames(node.children);
+    }
+  };
+  verifyEnglishNames(hierarchy.countries);
   const totalDistance = activities.reduce(
     (sum, activity) => sum + activity.distance,
     0

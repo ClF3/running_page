@@ -1,14 +1,11 @@
 import { useMemo } from 'react';
 import useActivities from '@/hooks/useActivities';
 import getSiteMetadata from '@/hooks/useSiteMetadata';
-import {
-  CHINESE_LOCATION_INFO_MESSAGE,
-  IS_CHINESE,
-  SHOW_ELEVATION_GAIN,
-} from '@/utils/const';
+import { SITE_MOTTO, IS_CHINESE, SHOW_ELEVATION_GAIN } from '@/utils/const';
 import { DIST_UNIT, M_TO_DIST, type Activity } from '@/utils/utils';
 import { summarizeDashboard } from '@/utils/dashboardStats';
 import type { PlaceNode } from '@/utils/locations';
+import { getPlaceDisplayName } from '@/utils/placeNames';
 import styles from './style.module.css';
 
 const label = (zh: string, en: string) => (IS_CHINESE ? zh : en);
@@ -29,7 +26,7 @@ const PlaceRows = ({
 }) => (
   <ul className={styles.places}>
     {nodes.map((node) => {
-      const name = node.name || label('地点未细分', 'Unspecified');
+      const name = getPlaceDisplayName(node);
       const content = (
         <>
           <span className={styles.placeName}>{name}</span>
@@ -47,7 +44,7 @@ const PlaceRows = ({
         >
           {label(
             `查看${name}的 ${node.runCount} 次记录`,
-            `View ${node.runCount} activities in ${name}`
+            `View ${node.runCount} ${node.runCount === 1 ? 'activity' : 'activities'} in ${name}`
           )}
         </button>
       );
@@ -91,7 +88,7 @@ const DashboardSidebar = ({
 }: {
   runs: Activity[];
   year: string;
-  selectedPlace?: { key: string; name: string };
+  selectedPlace?: PlaceNode;
   onChangeYear: (_year: string) => void;
   onSelectPlace: (_node: PlaceNode) => void;
 }) => {
@@ -99,9 +96,17 @@ const DashboardSidebar = ({
   const { years, locations } = useActivities();
   const stats = useMemo(() => summarizeDashboard(runs), [runs]);
   const metrics = [
-    ['Activities', stats.runCount.toLocaleString(), 'runs'],
+    [
+      'Activities',
+      stats.runCount.toLocaleString(),
+      stats.runCount === 1 ? 'run' : 'runs',
+    ],
     ['Avg. Pace', stats.pace, `/${DIST_UNIT}`],
-    ['Longest Streak', stats.longestStreak, 'days'],
+    [
+      'Longest Streak',
+      stats.longestStreak,
+      stats.longestStreak === 1 ? 'day' : 'days',
+    ],
     ['Avg. Heart Rate', stats.heartRate, 'bpm'],
     ...(SHOW_ELEVATION_GAIN
       ? [
@@ -120,7 +125,7 @@ const DashboardSidebar = ({
         <h1>
           <a href={siteUrl}>{siteTitle}</a>
         </h1>
-        <p className={styles.motto}>{CHINESE_LOCATION_INFO_MESSAGE}</p>
+        <p className={styles.motto}>{SITE_MOTTO}</p>
       </header>
       <div className={styles.scope}>
         <span>{selectedPlace ? 'Place Stats' : 'Yearly Stats'}</span>
@@ -131,7 +136,7 @@ const DashboardSidebar = ({
         >
           {selectedPlace && (
             <option value="" disabled>
-              {selectedPlace.name || label('地点未细分', 'Unspecified')}
+              {getPlaceDisplayName(selectedPlace)}
             </option>
           )}
           {years.map((value) => (
@@ -167,8 +172,8 @@ const DashboardSidebar = ({
         <dl className={styles.coverage}>
           {[
             [label('国家', 'Countries'), locations.countryCount],
-            [label('国内省份', 'China provinces'), locations.provinceCount],
-            [label('国内城市', 'China cities'), locations.cityCount],
+            [label('国内省份', 'Provinces in China'), locations.provinceCount],
+            [label('国内城市', 'Cities in China'), locations.cityCount],
           ].map(([name, count]) => (
             <div key={name}>
               <dd>{count}</dd>

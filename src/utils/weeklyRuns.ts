@@ -86,13 +86,17 @@ export const formatDurationCompact = (seconds: number): string => {
   return `${remainingSeconds}s`;
 };
 
+const monthFormatter = new Intl.DateTimeFormat('en', { month: 'short' });
+export const formatMonthLabel = (month: number): string =>
+  monthFormatter.format(new Date(2000, month, 1));
+
 const monthLabelsByWeek = (year: number): Map<string, string> => {
   const labels = new Map<string, string>();
   for (let month = 0; month < 12; month += 1) {
     const monthStart = new Date(year, month, 1);
     labels.set(
       formatDateKey(getWeekStartDate(monthStart)),
-      `${monthStart.getMonth() + 1}月`
+      formatMonthLabel(month)
     );
   }
   return labels;

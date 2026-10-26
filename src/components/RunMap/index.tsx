@@ -51,6 +51,37 @@ import { useMapTheme, useThemeChangeCounter } from '@/hooks/useTheme';
 
 const KEEP_WHEN_LIGHTS_OFF = ['runs2', 'runs2-indoor', 'animated-run'];
 
+const applyMapLanguage = (map: MapInstance) => {
+  if (IS_CHINESE) return;
+  for (const layer of map.getStyle().layers) {
+    if (layer.type !== 'symbol') continue;
+    const textField = layer.layout?.['text-field'];
+    if (!JSON.stringify(textField)?.includes('name')) continue;
+    // CARTO's Protomaps tiles split bilingual names into name/name2/name3.
+    // An absent script tag means Latin: https://docs.protomaps.com/basemaps/localization
+    if (JSON.stringify(textField).includes('housenumber')) continue;
+    map.setLayoutProperty(layer.id, 'text-field', [
+      'coalesce',
+      ['get', 'name:en'],
+      ['get', 'name_en'],
+      ['get', 'name:latin'],
+      ['get', 'name_latin'],
+      layer.source === 'protomaps'
+        ? [
+            'case',
+            ['all', ['has', 'name'], ['!', ['has', 'script']]],
+            ['get', 'name'],
+            ['all', ['has', 'name2'], ['!', ['has', 'script2']]],
+            ['get', 'name2'],
+            ['all', ['has', 'name3'], ['!', ['has', 'script3']]],
+            ['get', 'name3'],
+            '',
+          ]
+        : '',
+    ]);
+  }
+};
+
 interface IRunMapProps {
   title: string;
   viewState: IViewState;
@@ -149,6 +180,7 @@ const RunMap = ({
 
             // Reapply layer visibility settings with current lights state
             switchLayerVisibility(map, lights);
+            applyMapLanguage(map);
           } catch (error) {
             console.warn('Error applying map style changes:', error);
           }
@@ -298,6 +330,7 @@ const RunMap = ({
             });
           }
           mapRef.current = ref;
+          applyMapLanguage(map);
           switchLayerVisibility(map, lights);
         });
       }

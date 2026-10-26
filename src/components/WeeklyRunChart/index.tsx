@@ -3,6 +3,7 @@ import { DIST_UNIT, ELEV_UNIT } from '@/utils/utils';
 import {
   createWeeklyRunSummaries,
   formatDurationCompact,
+  formatMonthLabel,
   summarizeRuns,
   type WeeklyRunSummary,
 } from '@/utils/weeklyRuns';
@@ -89,7 +90,7 @@ const createMonthAxisLabels = (
     const monthCenterDay = monthStartDay + (monthEndDay - monthStartDay) / 2;
 
     return {
-      label: `${month + 1}月`,
+      label: formatMonthLabel(month),
       x: xForDay(monthCenterDay, startDay, endDay),
     };
   });
