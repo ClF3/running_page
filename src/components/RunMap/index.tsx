@@ -76,7 +76,7 @@ const RunMap = ({
   thisYear,
   animationTrigger,
 }: IRunMapProps) => {
-  const { locations, isComplete } = useActivities();
+  const { locations } = useActivities();
   const mapRef = useRef<MapRef>(null);
   const [lights, setLights] = useState(PRIVACY_MODE ? false : LIGHTS_ON);
   const [mapGeoData, setMapGeoData] =
@@ -482,32 +482,6 @@ const RunMap = ({
         </div>
       )}
       <RunMapButtons changeYear={changeYear} thisYear={thisYear} />
-      <button
-        type="button"
-        className={styles.worldButton}
-        onClick={() => {
-          mapRef.current?.fitBounds(
-            [
-              [-170, -55],
-              [180, 75],
-            ],
-            {
-              padding: { top: 65, bottom: 40, left: 20, right: 40 },
-              duration: 900,
-            }
-          );
-        }}
-      >
-        {IS_CHINESE ? '世界足迹' : 'World footprints'}
-      </button>
-      {showBoundaries && lights && (
-        <div className={styles.footprintLegend}>
-          <span style={{ background: countryColor }} />
-          {IS_CHINESE
-            ? `跑过 ${locations.countryCount} 个国家 · ${isComplete ? '全部年份' : '加载中…'}`
-            : `${locations.countryCount} countries · ${isComplete ? 'All years' : 'Loading…'}`}
-        </div>
-      )}
       <Source id="data" type="geojson" data={geoData}>
         <Layer
           id="runs2"

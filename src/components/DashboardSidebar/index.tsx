@@ -93,7 +93,7 @@ const DashboardSidebar = ({
   onSelectPlace: (_node: PlaceNode) => void;
 }) => {
   const { siteTitle, siteUrl } = getSiteMetadata();
-  const { years, locations, isComplete } = useActivities();
+  const { years, locations } = useActivities();
   const stats = useMemo(() => summarizeDashboard(runs), [runs]);
   const metrics = [
     [
@@ -122,10 +122,6 @@ const DashboardSidebar = ({
   return (
     <div className={styles.root}>
       <header className={styles.identity}>
-        <p>
-          {label('跑步记录', 'Running journal')} · {years.length}{' '}
-          {label('年', 'years')}
-        </p>
         <h1>
           <a href={siteUrl}>{siteTitle}</a>
         </h1>
@@ -182,11 +178,6 @@ const DashboardSidebar = ({
       <section className={styles.locations} aria-labelledby="places-heading">
         <div className={styles.scope}>
           <h2 id="places-heading">{label('跑过的地方', 'Places visited')}</h2>
-          <span className={styles.muted}>
-            {isComplete
-              ? label('全部年份', 'All years')
-              : label('加载中…', 'Loading…')}
-          </span>
         </div>
         <dl className={styles.coverage}>
           {[
@@ -207,20 +198,6 @@ const DashboardSidebar = ({
             onSelect={onSelectPlace}
           />
         </div>
-        <p className={styles.note}>
-          {label(
-            '按累计里程排序 · 展开中国查看省市',
-            'Sorted by distance · Expand China for provinces and cities'
-          )}
-        </p>
-        {locations.unlocatedCount > 0 && (
-          <p className={styles.note}>
-            {label(
-              `${locations.unlocatedCount} 次记录未识别到国家（${distance(locations.unlocatedDistanceMeters)} ${DIST_UNIT}），未计入地点统计。`,
-              `${locations.unlocatedCount} activities (${distance(locations.unlocatedDistanceMeters)} ${DIST_UNIT}) without a recognized country are excluded from places.`
-            )}
-          </p>
-        )}
       </section>
     </div>
   );
