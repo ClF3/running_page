@@ -1,10 +1,13 @@
 import { useMemo } from 'react';
 import useActivities from '@/hooks/useActivities';
 import getSiteMetadata from '@/hooks/useSiteMetadata';
-import { IS_CHINESE, SHOW_ELEVATION_GAIN } from '@/utils/const';
+import {
+  CHINESE_LOCATION_INFO_MESSAGE,
+  IS_CHINESE,
+  SHOW_ELEVATION_GAIN,
+} from '@/utils/const';
 import { DIST_UNIT, M_TO_DIST, type Activity } from '@/utils/utils';
 import { summarizeDashboard } from '@/utils/dashboardStats';
-import { formatDurationCompact } from '@/utils/weeklyRuns';
 import type { PlaceNode } from '@/utils/locations';
 import styles from './style.module.css';
 
@@ -125,6 +128,7 @@ const DashboardSidebar = ({
         <h1>
           <a href={siteUrl}>{siteTitle}</a>
         </h1>
+        <p className={styles.motto}>{CHINESE_LOCATION_INFO_MESSAGE}</p>
       </header>
       <div className={styles.scope}>
         <span>
@@ -152,16 +156,12 @@ const DashboardSidebar = ({
       </div>
       <section
         className={styles.hero}
-        aria-label={label('里程与用时', 'Distance and time')}
+        aria-label={label('总里程', 'Total distance')}
       >
         <p>{label('总里程', 'Total distance')}</p>
         <div className={styles.distance}>
           <strong>{distance(stats.distanceMeters)}</strong>
           <span>{DIST_UNIT}</span>
-        </div>
-        <div className={styles.heroFoot}>
-          <span>{label('累计用时', 'Moving time')}</span>
-          <strong>{formatDurationCompact(stats.movingSeconds)}</strong>
         </div>
       </section>
       <dl className={styles.metrics}>

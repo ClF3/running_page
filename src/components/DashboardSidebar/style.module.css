@@ -20,6 +20,12 @@
   line-height: 1.25;
   letter-spacing: -0.035em;
 }
+.motto {
+  margin: 0.5rem 0 0;
+  font-size: 0.9rem;
+  line-height: 1.5;
+  color: var(--color-run-date);
+}
 .scope {
   display: flex;
   align-items: center;
@@ -42,7 +48,7 @@
   color: inherit;
 }
 .hero {
-  padding: 1rem 1.1rem 0.85rem;
+  padding: 1rem 1.1rem;
   border: 1px solid color-mix(in srgb, var(--color-primary) 24%, transparent);
   border-radius: 0.65rem;
   background: color-mix(
@@ -60,7 +66,7 @@
   display: flex;
   align-items: baseline;
   gap: 0.45rem;
-  margin: 0.2rem 0 0.65rem;
+  margin: 0.2rem 0 0;
 }
 .distance strong {
   font-size: clamp(2.4rem, 3.8vw, 3rem);
@@ -70,18 +76,6 @@
 }
 .distance span {
   font-size: 1rem;
-}
-.heroFoot {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  padding-top: 0.65rem;
-  border-top: 1px solid var(--line);
-  font-size: 0.8rem;
-}
-.heroFoot strong {
-  font-size: 0.95rem;
-  font-weight: 500;
 }
 .metrics {
   display: grid;
