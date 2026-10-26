@@ -19,14 +19,15 @@
 }
 
 .content {
-  --run-map-height: 280px;
+  --run-map-height: clamp(17.5rem, 62.5cqw, 32rem);
+  container-type: inline-size;
   scroll-margin-top: 1.5rem;
 }
 
 @media (min-width: 1024px) {
   .dashboard {
-    grid-template-columns: minmax(20rem, 1fr) minmax(0, 2fr);
-    gap: clamp(1.5rem, 3vw, 3rem);
+    grid-template-columns: clamp(20rem, 26vw, 23rem) minmax(0, 1fr);
+    gap: clamp(1.5rem, 2.5vw, 2.5rem);
   }
 
   .title {
@@ -34,6 +35,10 @@
   }
 
   .content {
-    --run-map-height: clamp(280px, 40vh, 440px);
+    /* Prefer 16:10; reserve the header, summary and 720:160 chart on short screens. */
+    --run-map-height: max(
+      16rem,
+      min(62.5cqw, calc(100svh - 10rem - 22.2222cqw))
+    );
   }
 }

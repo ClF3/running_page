@@ -19,7 +19,7 @@ const Layout = ({ children }: React.PropsWithChildren) => {
         />
       </Helmet>
       <Header />
-      <main className="mx-auto mb-12 max-w-screen-2xl px-4 py-6 lg:px-10">
+      <main className="mx-auto mb-12 max-w-[90rem] px-4 py-6 lg:px-10">
         {children}
       </main>
     </>

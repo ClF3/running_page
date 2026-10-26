@@ -154,13 +154,6 @@
   fill: var(--weekly-chart-bar-selected);
 }
 
-@media (min-width: 1024px) {
-  .chart {
-    max-width: 48rem;
-    margin-inline: auto;
-  }
-}
-
 @media only screen and (max-width: 768px) {
   .chart {
     margin-top: 1.35rem;
