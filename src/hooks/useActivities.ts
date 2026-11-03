@@ -201,12 +201,17 @@ const loadAllActivityYears = (manifest: ActivityChunkManifest) => {
 const prefetchRemainingActivityYears = async (
   manifest: ActivityChunkManifest
 ) => {
-  for (const yearInfo of manifest.years.slice(1)) {
-    if (loadedActivityChunks.has(yearInfo.year)) continue;
-    // A failed year is reported by the store and can be retried explicitly.
-    // It must not prevent the remaining years from being downloaded.
-    await loadActivityYear(yearInfo.year).catch(() => undefined);
-  }
+  const pending = manifest.years
+    .slice(1)
+    .filter((yearInfo) => !loadedActivityChunks.has(yearInfo.year));
+  const worker = async () => {
+    for (let yearInfo = pending.shift(); yearInfo; yearInfo = pending.shift()) {
+      // One stalled year must not hold up every other year. Keep concurrency
+      // bounded so a long history does not flood the connection.
+      await loadActivityYear(yearInfo.year).catch(() => undefined);
+    }
+  };
+  await Promise.all([worker(), worker()]);
 };
 
 const startBackgroundPrefetch = (manifest: ActivityChunkManifest) => {

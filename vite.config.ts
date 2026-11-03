@@ -3,6 +3,7 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import svgr from 'vite-plugin-svgr';
 import tailwindcss from '@tailwindcss/vite';
+import { preloadDashboard } from './plugins/preloadDashboard';
 
 const colorClassMapping: { [key: string]: string } = {
   // Background
@@ -18,6 +19,7 @@ const colorClassMapping: { [key: string]: string } = {
 // https://vitejs.dev/config/
 export default defineConfig({
   plugins: [
+    preloadDashboard(),
     react(),
     tailwindcss(),
     svgr({
@@ -84,6 +86,20 @@ export default defineConfig({
   },
   build: {
     manifest: true,
+    rolldownOptions: {
+      output: {
+        codeSplitting: {
+          groups: [
+            {
+              // Shared helpers otherwise become many tiny, interdependent
+              // chunks. Keep lazy map/chart engines and SVGs separate.
+              name: 'app-core',
+              test: /[\\/]src[\\/](hooks|utils)[\\/]/,
+            },
+          ],
+        },
+      },
+    },
     // Keep even small language subsets out of render-blocking CSS. The browser
     // requests only the font weights and Unicode ranges used on the page.
     assetsInlineLimit: (filePath) =>

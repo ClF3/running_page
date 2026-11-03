@@ -3,6 +3,7 @@ import path from 'node:path';
 import { readFileSync, readdirSync } from 'node:fs';
 import { after, before, test } from 'node:test';
 import { createServer as createHttpServer } from 'node:http';
+import { runInNewContext } from 'node:vm';
 
 import { createServer } from 'vite';
 
@@ -40,6 +41,8 @@ let locations;
 let dashboardStats;
 let placeNames;
 let fetchJson;
+let dashboardPreloadScript;
+let preloadDashboard;
 
 const run = (overrides = {}) => ({
   run_id: 1,
@@ -85,6 +88,9 @@ before(async () => {
   dashboardStats = await server.ssrLoadModule('/src/utils/dashboardStats.ts');
   placeNames = await server.ssrLoadModule('/src/utils/placeNames.ts');
   ({ fetchJson } = await server.ssrLoadModule('/src/utils/fetchJson.ts'));
+  ({ dashboardPreloadScript, preloadDashboard } = await server.ssrLoadModule(
+    '/plugins/preloadDashboard.ts'
+  ));
 });
 
 after(async () => {
@@ -620,4 +626,164 @@ test('world boundaries can recover after a rejected download', async (t) => {
   assert.ok(boundaries.features.length > 0);
   await geoUtils.geoJsonForMap();
   assert.equal(calls, 2);
+});
+
+test('history prefetch overlaps slow years without exceeding two concurrent requests', async (t) => {
+  const loader = activitiesHook.__activityLoaderTest;
+  const originalFetch = globalThis.fetch;
+  const manifest = {
+    years: ['2026', '2025', '2024', '2023', '2022'].map((year) => ({
+      year,
+      file: Number(year) >= 2024 ? `year_${year}.json` : 'year_2024.json',
+    })),
+  };
+  const pending = [];
+  let active = 0;
+  let peak = 0;
+  loader.reset();
+  globalThis.fetch = async (url) => {
+    if (String(url).includes('manifest')) return jsonResponse(manifest);
+    active += 1;
+    peak = Math.max(active, peak);
+    return new Promise((resolve) =>
+      pending.push(() => {
+        active -= 1;
+        resolve(jsonResponse([run()]));
+      })
+    );
+  };
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+    loader.reset();
+  });
+  await loader.loadActivityManifest();
+  const prefetch = loader.prefetchRemainingActivityYears(manifest);
+  assert.equal(pending.length, 2);
+  // The second year completes while the first is still stalled.
+  pending.pop()();
+  await new Promise(setImmediate);
+  assert.equal(loader.getLoadedActivityData(manifest).length, 1);
+  assert.equal(
+    pending.length,
+    2,
+    'the next year starts before the slow year completes'
+  );
+  while (pending.length) {
+    pending.shift()();
+    await new Promise(setImmediate);
+  }
+  await prefetch;
+  assert.equal(peak, 2);
+  assert.equal(loader.getLoadedActivityData(manifest).length, 4);
+});
+
+test('HTML preloads use build hashes, cover static dependencies, and respect routes and base paths', () => {
+  const chunk = (fileName, facadeModuleId, imports = [], css = []) => ({
+    type: 'chunk',
+    fileName,
+    facadeModuleId,
+    imports,
+    modules: {},
+    viteMetadata: { importedCss: new Set(css) },
+  });
+  const asset = (fileName, sourceName, source = '') => ({
+    type: 'asset',
+    fileName,
+    originalFileNames: [sourceName],
+    source,
+  });
+  const bundle = {
+    'assets/page-hash.js': chunk(
+      'assets/page-hash.js',
+      '/repo/src/pages/index.tsx',
+      ['assets/shared-hash.js'],
+      ['assets/page-hash.css']
+    ),
+    'assets/shared-hash.js': chunk('assets/shared-hash.js', null, [
+      'assets/page-hash.js',
+    ]),
+    'assets/map-hash.js': {
+      ...chunk('assets/map-hash.js', null),
+      modules: { '/repo/node_modules/mapbox-gl/dist/mapbox-gl.js': {} },
+    },
+    'assets/summary-hash.js': chunk(
+      'assets/summary-hash.js',
+      '/repo/src/pages/total.tsx'
+    ),
+    'assets/manifest-hash.json': asset(
+      'assets/manifest-hash.json',
+      'src/static/activity_chunks/manifest.json',
+      JSON.stringify({ years: [{ file: 'year_2027.json' }] })
+    ),
+    'assets/year_2027-hash.json': asset(
+      'assets/year_2027-hash.json',
+      'src/static/activity_chunks/year_2027.json'
+    ),
+    'assets/year_2026-hash.json': asset(
+      'assets/year_2026-hash.json',
+      'src/static/activity_chunks/year_2026.json'
+    ),
+  };
+  const script = dashboardPreloadScript(bundle, '/runs/');
+  const runHints = (path) => {
+    const links = [];
+    runInNewContext(script, {
+      URL,
+      location: {
+        href: `https://example.com${path}`,
+        pathname: path.split('#')[0],
+      },
+      document: {
+        querySelectorAll: () => links,
+        createElement: () => ({}),
+        head: { appendChild: (link) => links.push(link) },
+      },
+    });
+    return links;
+  };
+  const links = runHints('/runs/#run_123');
+  assert.equal(links.length, 6);
+  assert.equal(new Set(links.map((link) => link.href)).size, links.length);
+  assert.ok(
+    links.every((link) =>
+      link.href.startsWith('https://example.com/runs/assets/')
+    )
+  );
+  assert.ok(links.some((link) => link.href.endsWith('shared-hash.js')));
+  assert.ok(
+    links.some(
+      (link) =>
+        link.href.endsWith('map-hash.js') && link.fetchPriority === 'low'
+    )
+  );
+  assert.ok(
+    links.some(
+      (link) =>
+        link.href.endsWith('year_2027-hash.json') &&
+        link.as === 'fetch' &&
+        link.crossOrigin === 'anonymous'
+    )
+  );
+  assert.ok(!links.some((link) => /summary|2026/.test(link.href)));
+  assert.equal(runHints('/runs/index.html').length, links.length);
+  assert.equal(runHints('/runs/summary').length, 0);
+  assert.equal(runHints('/runs/missing').length, 0);
+  assert.equal(runHints('/').length, 0);
+
+  const html = readFileSync('index.html', 'utf8').replace(
+    '</head>',
+    '<link rel="stylesheet" href="/build.css"></head>'
+  );
+  const output = preloadDashboard().transformIndexHtml.handler(html, {
+    bundle,
+  });
+  assert.ok(
+    output.indexOf('data-dashboard-preloads') >
+      output.indexOf('sessionStorage.removeItem')
+  );
+  assert.ok(
+    output.indexOf('data-dashboard-preloads') <
+      output.indexOf('rel="stylesheet"')
+  );
+  assert.ok(!output.includes('<!-- dashboard-preloads -->'));
 });

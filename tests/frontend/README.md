@@ -67,3 +67,51 @@ year switching, weekly filtering and activity pagination. At 1920×1080, sampled
 sidebar text and map dimensions exactly matched the baseline. The 390 px mobile
 view had no horizontal overflow; at 3840 px the sidebar remained 416 px and map
 864 px wide. The running records and generated data were unchanged.
+
+## Cold-start request waterfall follow-up
+
+The baseline for this follow-up is `a6922bf0`. Previously, the first visit still
+had a chain of entry script → dashboard chunks → manifest → current-year data
+→ map component mount → Mapbox download. Vite's normal dynamic-import preload
+only starts when the importing code executes; it cannot discover the initial
+dashboard and JSON requests from HTML by itself.
+
+The production build now generates route-scoped resource hints from its actual
+hashed outputs. They run after redirect restoration and before stylesheets can
+block the hint script. The manifest and newest year are requested early, along
+with the dashboard's static code/CSS dependencies; the map engine has low
+priority. Shared hooks/utilities are grouped to avoid many tiny script requests.
+Historical years use two concurrent background workers. Summary charts, large
+SVGs and world boundaries remain lazy. Direct `/summary` and unknown routes do
+not preload the dashboard. The hints automatically follow the newest manifest
+year, including after the data-sync workflow changes it.
+
+Three uncached network loads per variant, medians below, from the same loopback
+preview server. Sizes are shared across requests, not per-request limits:
+
+| Connection                | Resource milestone                  | Before |  After |
+| ------------------------- | ----------------------------------- | -----: | -----: |
+| 128 KiB/s, 150 ms delay   | Manifest request starts             | 1.93 s | 0.26 s |
+| 128 KiB/s, 150 ms delay   | Current-year JSON download finishes | 3.00 s | 2.32 s |
+| 128 KiB/s, 150 ms delay   | Mapbox JS download finishes         | 8.64 s | 8.18 s |
+| 1,024 KiB/s, 300 ms delay | Manifest request starts             | 1.51 s | 0.34 s |
+| 1,024 KiB/s, 300 ms delay | Current-year JSON download finishes | 2.20 s | 0.85 s |
+| 1,024 KiB/s, 300 ms delay | Mapbox JS download finishes         | 3.24 s | 2.18 s |
+
+Homepage script requests drop from 11 to 7; total local requests drop from 25 to 21. No resource was downloaded twice in any successful run. These are response
+timings relative to the initial HTML request, **not measured first paint or map
+tile completion**. The local server uses HTTP/1.1 and `Cache-Control: no-store`;
+real hosting/CDN behavior, external tiles, connection reuse and JavaScript
+execution can change the result. The large unchanged Mapbox payload still
+dominates the 1 Mbps case, so concurrency alone cannot remove that transfer cost.
+
+Verified automatic recovery when the preloaded current-year JSON first returns
+503; direct Summary loads do not request Mapbox; sampled dashboard text/map
+dimensions match the baseline. Tests cover transitive dependency hints,
+deduplication, skipping other routes, future-year manifests, `/runs/` hosting,
+hint placement before CSS, and the two-request concurrency bound. A production
+build with `--base=/runs/` also passed.
+
+Implementation references: [Vite HTML transforms](https://vite.dev/guide/api-plugin.html#transformindexhtml),
+[module preloads](https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Attributes/rel/modulepreload),
+and [preload request/credential matching](https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Attributes/rel/preload#cors-enabled_fetches).
