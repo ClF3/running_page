@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import { readFileSync, readdirSync } from 'node:fs';
 import { after, before, test } from 'node:test';
+import { createServer as createHttpServer } from 'node:http';
 
 import { createServer } from 'vite';
 
@@ -38,6 +39,7 @@ let weeklyRuns;
 let locations;
 let dashboardStats;
 let placeNames;
+let fetchJson;
 
 const run = (overrides = {}) => ({
   run_id: 1,
@@ -82,6 +84,7 @@ before(async () => {
   locations = await server.ssrLoadModule('/src/utils/locations.ts');
   dashboardStats = await server.ssrLoadModule('/src/utils/dashboardStats.ts');
   placeNames = await server.ssrLoadModule('/src/utils/placeNames.ts');
+  ({ fetchJson } = await server.ssrLoadModule('/src/utils/fetchJson.ts'));
 });
 
 after(async () => {
@@ -501,4 +504,120 @@ test('activity loader fetches newest chunks first and merges loaded years', asyn
   );
   assert.equal(loader.findActivityYearForRunId(loadedManifest, 2), '2025');
   assert.equal(loader.findActivityYearForRunId(loadedManifest, 999), null);
+});
+
+test('JSON loading recovers from disconnects, server errors and stalled bodies with bounded retries', async (t) => {
+  const calls = new Map();
+  const http = createHttpServer((req, res) => {
+    const count = (calls.get(req.url) || 0) + 1;
+    calls.set(req.url, count);
+    if (req.url === '/flaky' && count === 1) return req.socket.destroy();
+    if ((req.url === '/flaky' && count === 2) || req.url === '/unavailable') {
+      res.writeHead(503).end('temporarily unavailable');
+    } else if (req.url === '/missing') {
+      res.writeHead(404).end('not found');
+    } else if (req.url === '/invalid') {
+      res.end('{');
+    } else if (req.url === '/stalled-headers' && count === 1) {
+      // Simulate a connection that never returns response headers.
+    } else if (req.url === '/stalled-body' && count === 1) {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.write('{');
+    } else {
+      res.end('{"ok":true}');
+    }
+  });
+  await new Promise((resolve) => http.listen(0, '127.0.0.1', resolve));
+  t.after(() => {
+    http.closeAllConnections();
+    http.close();
+  });
+  const base = `http://127.0.0.1:${http.address().port}`;
+  const options = { retryDelayMs: 5, timeoutMs: 100 };
+  assert.deepEqual(await fetchJson(`${base}/flaky`, options), { ok: true });
+  assert.equal(calls.get('/flaky'), 3);
+  for (const route of ['/stalled-headers', '/stalled-body']) {
+    assert.deepEqual(await fetchJson(base + route, options), { ok: true });
+    assert.equal(calls.get(route), 2);
+  }
+  await assert.rejects(fetchJson(`${base}/missing`, options), /HTTP 404/);
+  assert.equal(calls.get('/missing'), 1);
+  await assert.rejects(fetchJson(`${base}/invalid`, options), SyntaxError);
+  assert.equal(calls.get('/invalid'), 1);
+  await assert.rejects(fetchJson(`${base}/unavailable`, options), /HTTP 503/);
+  assert.equal(calls.get('/unavailable'), 3);
+});
+
+test('failed manifest and year downloads can be retried without losing cached years', async (t) => {
+  const loader = activitiesHook.__activityLoaderTest;
+  const originalFetch = globalThis.fetch;
+  const manifest = {
+    version: 1,
+    total_count: 3,
+    years: ['2026', '2025', '2024'].map((year) => ({
+      year,
+      file: `year_${year}.json`,
+      count: 1,
+      run_ids: [Number(year)],
+    })),
+  };
+  let manifestFailed = true;
+  let yearFailed = true;
+  const calls = [];
+  loader.reset();
+  globalThis.fetch = async (url) => {
+    const href = String(url);
+    calls.push(href);
+    if (href.includes('manifest.json')) {
+      return manifestFailed
+        ? { ok: false, status: 404 }
+        : jsonResponse(manifest);
+    }
+    if (href.includes('2025') && yearFailed) return { ok: false, status: 404 };
+    const year = manifest.years.find((entry) => href.includes(entry.year)).year;
+    return jsonResponse([
+      run({ run_id: Number(year), start_date_local: `${year}-01-01 08:00:00` }),
+    ]);
+  };
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+    loader.reset();
+  });
+  await assert.rejects(loader.loadActivityManifest(), /HTTP 404/);
+  manifestFailed = false;
+  const loadedManifest = await loader.loadActivityManifest();
+  await loader.loadActivityYear('2026');
+  await loader.prefetchRemainingActivityYears(loadedManifest);
+  assert.deepEqual(
+    loader.getLoadedActivityData(loadedManifest).map((r) => r.run_id),
+    [2024, 2026]
+  );
+  yearFailed = false;
+  await loader.loadAllActivityYears(loadedManifest);
+  assert.deepEqual(
+    loader.getLoadedActivityData(loadedManifest).map((r) => r.run_id),
+    [2024, 2025, 2026]
+  );
+  assert.equal(calls.filter((url) => url.includes('year_2026')).length, 1);
+  assert.equal(calls.filter((url) => url.includes('year_2024')).length, 1);
+  assert.equal(calls.filter((url) => url.includes('year_2025')).length, 2);
+});
+
+test('world boundaries can recover after a rejected download', async (t) => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    return calls === 1
+      ? { ok: false, status: 404 }
+      : jsonResponse({ type: 'FeatureCollection', features: [] });
+  };
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+  await assert.rejects(geoUtils.geoJsonForMap(), /HTTP 404/);
+  const boundaries = await geoUtils.geoJsonForMap();
+  assert.ok(boundaries.features.length > 0);
+  await geoUtils.geoJsonForMap();
+  assert.equal(calls, 2);
 });

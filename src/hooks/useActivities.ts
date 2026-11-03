@@ -3,6 +3,7 @@ import type { Activity } from '@/utils/utils';
 import { locationForRun, titleForRun } from '@/utils/utils';
 import manifestUrl from '@/static/activity_chunks/manifest.json?url';
 import { COUNTRY_STANDARDIZATION } from '@/static/city';
+import { fetchJson } from '@/utils/fetchJson';
 import {
   buildLocationHierarchy,
   type LocationHierarchy,
@@ -34,6 +35,7 @@ interface ProcessedActivities {
   thisYear: string;
   loadedYears: string[];
   loadingYears: string[];
+  failedYears: string[];
   isComplete: boolean;
   loadYear: (_year: string) => Promise<Activity[]>;
   loadAll: () => Promise<void>;
@@ -103,15 +105,8 @@ const subscribeToActivityStore = (listener: () => void) => {
 const getActivityStoreSnapshot = () => activityStoreVersion;
 
 const loadActivityManifest = () => {
-  activityManifestPromise ??= fetch(manifestUrl)
-    .then((response) => {
-      if (!response.ok) {
-        throw new Error(
-          `Failed to load activity chunks manifest: ${response.status}`
-        );
-      }
-      return response.json() as Promise<ActivityChunkManifest>;
-    })
+  if (activityManifestCache) return Promise.resolve(activityManifestCache);
+  activityManifestPromise ??= fetchJson<ActivityChunkManifest>(manifestUrl)
     .then((manifest) => {
       activityManifestCache = manifest;
       activityManifestError = null;
@@ -119,6 +114,7 @@ const loadActivityManifest = () => {
       return manifest;
     })
     .catch((error: unknown) => {
+      activityManifestPromise = null;
       activityManifestError = error;
       notifyActivityStore();
       throw error;
@@ -152,19 +148,9 @@ const loadActivityYear = (year: string) => {
   const existingPromise = activityChunkPromises.get(year);
   if (existingPromise) return existingPromise;
 
-  const existingError = activityChunkErrors.get(year);
-  if (existingError) return Promise.reject(existingError);
-
   const chunkUrl = chunkUrlForYear(year);
-  const activityChunkPromise = fetch(chunkUrl)
-    .then((response) => {
-      if (!response.ok) {
-        throw new Error(
-          `Failed to load activity chunk ${year}: ${response.status}`
-        );
-      }
-      return response.json() as Promise<Activity[]>;
-    })
+  activityChunkErrors.delete(year);
+  const activityChunkPromise = fetchJson<Activity[]>(chunkUrl)
     .then((activityData) => {
       loadedActivityChunks.set(year, activityData);
       activityChunkPromises.delete(year);
@@ -207,9 +193,6 @@ const firstChunkErrorForManifest = (manifest: ActivityChunkManifest) => {
 };
 
 const loadAllActivityYears = (manifest: ActivityChunkManifest) => {
-  const chunkError = firstChunkErrorForManifest(manifest);
-  if (chunkError) return Promise.reject(chunkError);
-
   return Promise.all(
     manifest.years.map((yearInfo) => loadActivityYear(yearInfo.year))
   ).then(() => undefined);
@@ -220,7 +203,9 @@ const prefetchRemainingActivityYears = async (
 ) => {
   for (const yearInfo of manifest.years.slice(1)) {
     if (loadedActivityChunks.has(yearInfo.year)) continue;
-    await loadActivityYear(yearInfo.year);
+    // A failed year is reported by the store and can be retried explicitly.
+    // It must not prevent the remaining years from being downloaded.
+    await loadActivityYear(yearInfo.year).catch(() => undefined);
   }
 };
 
@@ -300,6 +285,9 @@ const processActivities = (
     thisYear: yearsArray[0] || '',
     loadedYears: loadedYearsForManifest(manifest),
     loadingYears: loadingYearsForManifest(manifest),
+    failedYears: manifest.years
+      .map((yearInfo) => yearInfo.year)
+      .filter((year) => activityChunkErrors.has(year)),
     isComplete: isManifestComplete(manifest),
     loadYear: loadActivityYear,
     loadAll: () => loadAllActivityYears(manifest),

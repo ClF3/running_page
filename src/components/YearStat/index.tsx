@@ -148,7 +148,7 @@ const YearStat = ({
 
   const handleClick = () => {
     if (year !== 'Total') {
-      void loadYear(year);
+      void loadYear(year).catch(() => undefined);
     }
     onClick(year);
   };

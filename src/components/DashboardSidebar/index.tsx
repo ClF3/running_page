@@ -93,7 +93,7 @@ const DashboardSidebar = ({
   onSelectPlace: (_node: PlaceNode) => void;
 }) => {
   const { siteTitle, siteUrl } = getSiteMetadata();
-  const { years, locations } = useActivities();
+  const { years, locations, failedYears, loadAll } = useActivities();
   const stats = useMemo(() => summarizeDashboard(runs), [runs]);
   const metrics = [
     ['Activities', stats.runCount.toLocaleString()],
@@ -159,6 +159,18 @@ const DashboardSidebar = ({
           </div>
         ))}
       </dl>
+      {failedYears.length > 0 && (
+        <p role="alert" className="mt-4 text-sm">
+          Some activities could not be loaded.{' '}
+          <button
+            type="button"
+            className="underline"
+            onClick={() => void loadAll().catch(() => undefined)}
+          >
+            Retry
+          </button>
+        </p>
+      )}
       <section className={styles.locations} aria-labelledby="places-heading">
         <div className={styles.scope}>
           <h2 id="places-heading">{label('跑过的地方', 'Places visited')}</h2>

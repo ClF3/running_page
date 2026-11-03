@@ -103,8 +103,15 @@ type LocateActivityOptions = {
 };
 
 const Index = () => {
-  const { activities, thisYear, isComplete, loadAll, loadYear, yearForRunId } =
-    useActivities();
+  const {
+    activities,
+    thisYear,
+    isComplete,
+    failedYears,
+    loadAll,
+    loadYear,
+    yearForRunId,
+  } = useActivities();
   const themeChangeCounter = useThemeChangeCounter();
   const [year, setYear] = useState(thisYear);
   const [runIndex, setRunIndex] = useState(-1);
@@ -213,7 +220,7 @@ const Index = () => {
       scrollToMap();
       if (name != 'Year') {
         setYear(thisYear);
-        void loadAll();
+        void loadAll().catch(() => undefined);
       }
       setSelectedWeekKey(null);
       setCurrentFilter({ item, func });
@@ -228,9 +235,9 @@ const Index = () => {
   const changeYear = useCallback(
     (y: string) => {
       if (y === 'Total') {
-        void loadAll();
+        void loadAll().catch(() => undefined);
       } else {
-        void loadYear(y);
+        void loadYear(y).catch(() => undefined);
       }
 
       // default year
@@ -341,7 +348,9 @@ const Index = () => {
       return;
     }
 
-    void loadYear(targetYear);
+    if (!failedYears.includes(targetYear)) {
+      void loadYear(targetYear).catch(() => undefined);
+    }
     const targetRun = activities.find((run) => run.run_id === singleRunId);
     const isOutsideSelectedWeek =
       selectedWeekKey !== null &&
@@ -364,6 +373,7 @@ const Index = () => {
   }, [
     singleRunId,
     activities,
+    failedYears,
     selectedWeekKey,
     year,
     currentFilter.item,

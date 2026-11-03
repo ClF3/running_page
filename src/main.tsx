@@ -8,6 +8,7 @@ import {
 } from './utils/analytics';
 import '@/styles/index.css';
 import { withOptionalGAPageTracking } from './utils/trackRoute';
+import PageLoadError from '@/components/PageLoadError';
 
 const Index = lazy(() => import('./pages'));
 const HomePage = lazy(() => import('@/pages/total'));
@@ -25,14 +26,17 @@ const routes = createBrowserRouter(
     {
       path: '/',
       element: createRouteElement(<Index />),
+      errorElement: <PageLoadError />,
     },
     {
       path: 'summary',
       element: createRouteElement(<HomePage />),
+      errorElement: <PageLoadError />,
     },
     {
       path: '*',
       element: createRouteElement(<NotFound />),
+      errorElement: <PageLoadError />,
     },
   ],
   { basename: import.meta.env.BASE_URL }

@@ -28,6 +28,7 @@ import {
 } from './const';
 import type { Activity } from './utils';
 import { locationForRun } from './utils';
+import { fetchJson } from './fetchJson';
 
 export type Coordinate = [number, number];
 
@@ -123,11 +124,11 @@ export const geoJsonForRuns = (
 let worldGeoJsonPromise: Promise<FeatureCollection<RPGeometry>> | undefined;
 
 const loadWorldGeoJson = () => {
-  worldGeoJsonPromise ??= fetch(worldGeoJsonUrl).then((response) => {
-    if (!response.ok) {
-      throw new Error(`Failed to load world GeoJSON: ${response.status}`);
-    }
-    return response.json() as Promise<FeatureCollection<RPGeometry>>;
+  worldGeoJsonPromise ??= fetchJson<FeatureCollection<RPGeometry>>(
+    worldGeoJsonUrl
+  ).catch((error: unknown) => {
+    worldGeoJsonPromise = undefined;
+    throw error;
   });
   return worldGeoJsonPromise;
 };

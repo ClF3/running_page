@@ -84,7 +84,10 @@ export default defineConfig({
   },
   build: {
     manifest: true,
-    modulePreload: false,
+    // Keep even small language subsets out of render-blocking CSS. The browser
+    // requests only the font weights and Unicode ranges used on the page.
+    assetsInlineLimit: (filePath) =>
+      filePath.endsWith('.woff2') ? false : undefined,
     outDir: './dist', // for user easy to use, vercel use default dir -> dist
   },
 });
