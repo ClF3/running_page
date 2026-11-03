@@ -24,6 +24,12 @@
     gap: clamp(1.5rem, 2.5vw, 2.5rem);
   }
 
+  .sidebar {
+    width: 100%;
+    max-width: 26rem;
+    justify-self: center;
+  }
+
   .content {
     /* Prefer 16:10; reserve the header, summary and 720:160 chart on short screens. */
     --run-map-height: max(
