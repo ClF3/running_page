@@ -17,7 +17,10 @@
 
 @media (min-width: 1024px) {
   .dashboard {
-    grid-template-columns: clamp(20rem, 26vw, 23rem) minmax(0, 1fr);
+    /* Cap the map column; give remaining desktop space to the sidebar. */
+    grid-template-columns:
+      minmax(clamp(20rem, 26vw, 23rem), 1fr)
+      minmax(0, 54rem);
     gap: clamp(1.5rem, 2.5vw, 2.5rem);
   }
 
