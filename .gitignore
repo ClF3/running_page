@@ -1,0 +1,34 @@
+# Project dependencies
+.yarn
+.cache
+*.pyc
+__pycache__/
+node_modules
+yarn-error.log
+
+# Build directory
+/build
+/dist
+.DS_Store
+.sass-cache/
+_posts/
+_site/
+
+.mypy_cache
+
+/.vscode
+.idea
+
+config.yaml
+.venv/
+.pdm-python
+
+route.png
+route.svg
+
+.env
+.env.*
+.dev.vars*
+.wrangler/
+run_page/data.db.backup-*
+ops/runtime.env

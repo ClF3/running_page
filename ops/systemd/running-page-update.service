@@ -1,0 +1,13 @@
+[Unit]
+Description=Synchronize running data and publish complete changes
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/running-page/current/ops/run update
+TimeoutStartSec=45min
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7

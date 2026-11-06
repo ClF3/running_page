@@ -1,0 +1,40 @@
+.dashboard {
+  display: grid;
+  gap: 1.5rem;
+  align-items: start;
+}
+
+.sidebar,
+.content {
+  min-width: 0;
+}
+
+.content {
+  --run-map-height: clamp(17.5rem, 62.5cqw, 32rem);
+  container-type: inline-size;
+  scroll-margin-top: 1.5rem;
+}
+
+@media (min-width: 1024px) {
+  .dashboard {
+    /* Cap the map column; give remaining desktop space to the sidebar. */
+    grid-template-columns:
+      minmax(clamp(20rem, 26vw, 23rem), 1fr)
+      minmax(0, 54rem);
+    gap: clamp(1.5rem, 2.5vw, 2.5rem);
+  }
+
+  .sidebar {
+    width: 100%;
+    max-width: 26rem;
+    justify-self: center;
+  }
+
+  .content {
+    /* Prefer 16:10; reserve the header, summary and 720:160 chart on short screens. */
+    --run-map-height: max(
+      16rem,
+      min(62.5cqw, calc(100svh - 10rem - 22.2222cqw))
+    );
+  }
+}

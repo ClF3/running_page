@@ -1,0 +1,247 @@
+@media only screen and (max-width: 768px) {
+  .tableContainer {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .runTable {
+    font-size: 0.8rem;
+  }
+
+  .runTable th,
+  .runTable td {
+    padding: 0.25rem !important;
+    white-space: nowrap;
+    min-width: 60px;
+  }
+
+  .runTable th:first-child,
+  .runTable td:first-child {
+    min-width: 100px;
+  }
+
+  .runTable th:last-child,
+  .runTable td:last-child {
+    min-width: 80px;
+  }
+}
+
+.runTable {
+  width: 100%;
+  min-width: 700px;
+  margin: 0.5rem 0;
+  color: var(--color-run-table-thead);
+  background-color: var(--color-background);
+  font-family: var(--font-mono);
+  table-layout: fixed;
+  :is(thead) {
+    color: var(--color-run-table-thead);
+
+    :is(th) {
+      padding: 0.5rem;
+      white-space: nowrap;
+      text-align: center;
+    }
+
+    .sortableHeader {
+      cursor: pointer;
+      user-select: none;
+      transition: color 0.2s ease;
+    }
+
+    .sortableHeader button {
+      cursor: pointer;
+      width: 100%;
+      text-align: inherit;
+    }
+
+    .sortableHeader:hover {
+      color: var(--color-primary);
+    }
+
+    :is(th):first-child {
+      text-align: left;
+    }
+
+    :is(th):last-child {
+      text-align: right;
+    }
+  }
+  :is(th, td) {
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    text-align: center;
+  }
+
+  :is(th, td):first-child {
+    text-align: left;
+  }
+
+  :is(th, td):last-child {
+    text-align: right;
+  }
+}
+
+.titleColumn {
+  width: auto;
+}
+
+.distanceColumn,
+.elevationColumn,
+.paceColumn,
+.timeColumn {
+  width: 6rem;
+}
+
+.heartRateColumn {
+  width: 5.25rem;
+}
+
+.dateColumn {
+  width: 13.75rem;
+}
+
+.runRow {
+  cursor: pointer;
+  :is(td) {
+    padding: 0.5rem;
+    border: 0;
+    text-align: center; /* 默认居中 */
+  }
+
+  :is(td):first-child {
+    text-align: left;
+  }
+
+  :is(td):last-child {
+    text-align: right;
+  }
+
+  &:hover {
+    background-color: var(--color-run-row-hover-background);
+  }
+}
+
+.selected {
+  color: var(--color-primary);
+}
+
+.tableContainer {
+  width: 100%;
+  overflow-x: auto;
+}
+
+.runDate {
+  color: var(--color-run-date);
+}
+
+.records {
+  --record-border: color-mix(
+    in srgb,
+    var(--color-run-table-thead) 22%,
+    transparent
+  );
+  margin: 1.5rem 0 2rem;
+  color: var(--color-run-table-thead);
+}
+
+.toolbar,
+.tableOptions,
+.pageControls,
+.paginationFooter,
+.pageSize,
+.pageControls label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.toolbar,
+.paginationFooter {
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.toolbar h2 {
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.toolbar h2 span {
+  margin-left: 0.4rem;
+  color: var(--color-run-date);
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  font-weight: 400;
+}
+
+.tableOptions {
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.pageControls,
+.pageSize,
+.paginationFooter {
+  font-size: 0.8rem;
+}
+
+.pageControls button,
+.pageControls select,
+.pageSize select {
+  min-height: 2rem;
+  padding: 0.25rem 0.5rem;
+  border: 1px solid var(--record-border);
+  border-radius: 0.375rem;
+  background: var(--color-background);
+  color: var(--color-run-table-thead);
+  cursor: pointer;
+}
+
+.pageControls button {
+  min-width: 2rem;
+}
+
+.pageControls button:hover:not(:disabled) {
+  color: var(--color-primary);
+  background: var(--color-run-row-hover-background);
+}
+
+.pageControls button:disabled {
+  cursor: default;
+  opacity: 0.35;
+}
+
+.pageCount,
+.paginationFooter > span {
+  color: var(--color-run-date);
+}
+
+.paginationFooter {
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--record-border);
+}
+
+.empty {
+  padding: 2rem !important;
+  text-align: center !important;
+  color: var(--color-run-date);
+}
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.pageControls :is(button, select):focus-visible,
+.pageSize select:focus-visible,
+.sortableHeader button:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}

@@ -1,0 +1,13 @@
+{
+  "source": "/app",
+  "state": "/data",
+  "site_url": "https://run-dev.clf3.org",
+  "worker": "running-page",
+  "repository": "git@github.com:ClF3/running_page.git",
+  "backup_branch": "data-backup",
+  "athlete": "ClF3",
+  "birth_month": "1989-03",
+  "refresh_days": 30,
+  "garmin_region": "cn",
+  "command_timeout": 1800
+}

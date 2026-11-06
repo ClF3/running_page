@@ -1,0 +1,29 @@
+#!/bin/sh
+# Enable scheduling only after real authenticated acceptance checks passed.
+set -eu
+project_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+. "$project_root/ops/environment"
+[ "$running_page_user_mode" -eq 1 ] || [ "$(id -u)" -eq 0 ] || { echo 'Run with sudo'; exit 1; }
+python3 - "$project_root" <<'PY'
+import json, subprocess, sys
+from pathlib import Path
+result = subprocess.run([str(Path(sys.argv[1])/'ops/run'), 'status'], check=True,
+                        text=True, capture_output=True)
+status = json.loads(result.stdout)
+if not all(status['credentials'].values()):
+    raise SystemExit('Credentials are incomplete; timers remain disabled')
+if status['sync'].get('bootstrap') or not status['sync'].get('last_success'):
+    raise SystemExit('A real Garmin synchronization must pass first')
+if not status['deployed'].get('deployed_at'):
+    raise SystemExit('A real Cloudflare deployment must pass first')
+if not status['backup'].get('pushed_at'):
+    raise SystemExit('A real GitHub backup push must pass first')
+PY
+if [ "$running_page_user_mode" -eq 1 ]; then
+  [ "$(loginctl show-user "$(id -un)" -p Linger --value)" = yes ] || { echo 'User lingering must be enabled first'; exit 1; }
+  systemd-analyze --user verify "$running_page_units"/running-page-*
+  systemctl --user enable --now running-page-update.timer running-page-backup.timer
+else
+  systemd-analyze verify "$running_page_units"/running-page-*
+  systemctl enable --now running-page-update.timer running-page-backup.timer
+fi

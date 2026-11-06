@@ -1,0 +1,30 @@
+#!/bin/sh
+# A dedicated builder also limits dependency installation, not only job containers.
+set -eu
+project_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
+. "$project_root/ops/environment"
+if [ "$running_page_user_mode" -eq 0 ] && [ "$(id -u)" -ne 0 ]; then
+  exec sudo -n "$project_root/ops/build" "$@"
+fi
+[ "$#" -eq 0 ] || { echo 'Usage: sudo ops/build'; exit 1; }
+exec 9>"$RUNNING_PAGE_HOST_STATE/image-build.lock"
+flock -n 9 || { echo 'Another image build is running'; exit 1; }
+builder=running-page
+if ! docker buildx inspect "$builder" >/dev/null 2>&1; then
+  docker buildx create --name "$builder" --driver docker-container \
+    --driver-opt "memory=${RUNNING_PAGE_MEMORY_LIMIT:-512m},memory-swap=${RUNNING_PAGE_MEMORY_SWAP_LIMIT:-2560m},cpu-period=100000,cpu-quota=100000,cpuset-cpus=$RUNNING_PAGE_CPUSET,restart-policy=no"
+fi
+trap 'docker buildx stop "$builder" >/dev/null 2>&1 || true' EXIT
+docker buildx inspect --bootstrap "$builder" >/dev/null
+docker update --memory "${RUNNING_PAGE_MEMORY_LIMIT:-512m}" \
+  --memory-swap "${RUNNING_PAGE_MEMORY_SWAP_LIMIT:-2560m}" \
+  --cpuset-cpus "$RUNNING_PAGE_CPUSET" "buildx_buildkit_${builder}0" >/dev/null
+docker buildx build --builder "$builder" --load \
+  --file "$project_root/ops/Dockerfile" \
+  --tag "running-page-runner:${RUNNING_PAGE_IMAGE_TAG:-local}" \
+  --build-arg "SOURCE_REVISION=${RUNNING_PAGE_REVISION:-uncommitted}" \
+  --build-arg "RUNNER_UID=${RUNNING_PAGE_CONTAINER_UID:-1000}" \
+  --build-arg "RUNNER_GID=${RUNNING_PAGE_CONTAINER_GID:-1000}" \
+  --build-arg "NODE_IMAGE=${NODE_IMAGE:-node:22-bookworm-slim@sha256:5ec23b7c622b00547753bc6ffd78085dd868a68aeb41c8e0a1418f033e13d96d}" \
+  --build-arg "PYTHON_IMAGE=${PYTHON_IMAGE:-python:3.12-slim-bookworm@sha256:935c3c5b12357a7e10caa9c1e6ca5692344d97cf229832ef584be2cec9fc03df}" \
+  "$project_root"

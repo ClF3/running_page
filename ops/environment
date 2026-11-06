@@ -1,0 +1,36 @@
+# Sourced by the host scripts after they resolve project_root.
+if [ -f "$project_root/ops/runtime.env" ]; then
+  set -a
+  . "$project_root/ops/runtime.env"
+  set +a
+elif [ -z "${RUNNING_PAGE_ROOT:-}" ] && [ -f /etc/running-page/runtime.env ]; then
+  set -a
+  . /etc/running-page/runtime.env
+  set +a
+fi
+export RUNNING_PAGE_CPUSET=${RUNNING_PAGE_CPUSET:-$(python3 -c 'import os; print(min(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else 0)')}
+if [ -n "${RUNNING_PAGE_ROOT:-}" ]; then
+  case "$RUNNING_PAGE_ROOT" in
+    /*) ;;
+    *) echo 'RUNNING_PAGE_ROOT must be absolute' >&2; exit 1 ;;
+  esac
+  export RUNNING_PAGE_HOST_STATE="$RUNNING_PAGE_ROOT/state"
+  export RUNNING_PAGE_HOST_CONFIG="$RUNNING_PAGE_ROOT/config"
+  export RUNNING_PAGE_CONTAINER_UID="$(id -u)"
+  export RUNNING_PAGE_CONTAINER_GID="$(id -g)"
+  export RUNNING_PAGE_CONTAINER_USER="$RUNNING_PAGE_CONTAINER_UID:$RUNNING_PAGE_CONTAINER_GID"
+  export RUNNING_PAGE_MEMORY_LIMIT=${RUNNING_PAGE_MEMORY_LIMIT:-2048m}
+  export RUNNING_PAGE_MEMORY_SWAP_LIMIT=${RUNNING_PAGE_MEMORY_SWAP_LIMIT:-3072m}
+  running_page_code_root=$RUNNING_PAGE_ROOT
+  running_page_user_mode=1
+  running_page_units="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
+else
+  export RUNNING_PAGE_HOST_STATE=/var/lib/running-page
+  export RUNNING_PAGE_HOST_CONFIG=/etc/running-page
+  export RUNNING_PAGE_CONTAINER_USER=0:0
+  export RUNNING_PAGE_CONTAINER_UID=0
+  export RUNNING_PAGE_CONTAINER_GID=0
+  running_page_code_root=/opt/running-page
+  running_page_user_mode=0
+  running_page_units=/etc/systemd/system
+fi

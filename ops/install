@@ -1,0 +1,23 @@
+#!/bin/sh
+# Installs files only. Timers are enabled explicitly after acceptance checks.
+set -eu
+project_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+. "$project_root/ops/environment"
+[ "$running_page_user_mode" -eq 1 ] || [ "$(id -u)" -eq 0 ] || { echo 'Run with sudo'; exit 1; }
+if [ "${1:-}" = --prepare-swap ]; then
+  python3 "$project_root/ops/prepare_swap.py"
+elif [ "$#" -ne 0 ]; then
+  echo 'Usage: sudo ops/install [--prepare-swap]'
+  exit 1
+fi
+docker info >/dev/null
+install -d -m 700 "$RUNNING_PAGE_HOST_CONFIG" "$RUNNING_PAGE_HOST_STATE" "$RUNNING_PAGE_HOST_STATE/seed"
+[ -f "$RUNNING_PAGE_HOST_CONFIG/config.json" ] || install -m 600 "$project_root/ops/config.example.json" "$RUNNING_PAGE_HOST_CONFIG/config.json"
+[ -f "$RUNNING_PAGE_HOST_CONFIG/credentials.env" ] || install -m 600 "$project_root/ops/credentials.example.env" "$RUNNING_PAGE_HOST_CONFIG/credentials.env"
+python3 "$project_root/ops/install_units.py" "$project_root" "$running_page_units" "$running_page_code_root" "$running_page_user_mode"
+if [ "$running_page_user_mode" -eq 1 ]; then
+  systemctl --user daemon-reload
+else
+  systemctl daemon-reload
+fi
+echo 'Installed. Complete bootstrap, build, credentials and restore checks before enabling timers.'

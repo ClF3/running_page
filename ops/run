@@ -1,0 +1,20 @@
+#!/bin/sh
+set -eu
+project_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
+. "$project_root/ops/environment"
+if [ "$running_page_user_mode" -eq 0 ] && [ "$(id -u)" -ne 0 ]; then
+  exec sudo -n "$project_root/ops/run" "$@"
+fi
+if [ "${1:-}" = upgrade ]; then
+  shift
+  exec "$project_root/ops/upgrade" "$@"
+fi
+if [ "${1:-}" = rollback ]; then
+  if [ "$running_page_user_mode" -eq 1 ]; then
+    systemctl --user stop running-page-update.timer
+  else
+    systemctl stop running-page-update.timer
+  fi
+  echo 'Updates paused for rollback; resume after selecting corrected code.' >&2
+fi
+exec docker compose -f "$project_root/ops/compose.yaml" run --rm --no-deps --interactive=false runner "$@"

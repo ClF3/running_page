@@ -1,0 +1,9 @@
+[Unit]
+Description=Daily running data backup at 03:00 Beijing time
+
+[Timer]
+OnCalendar=*-*-* 03:00:00 Asia/Shanghai
+Persistent=true
+
+[Install]
+WantedBy=timers.target
