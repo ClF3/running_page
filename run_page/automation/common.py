@@ -22,6 +22,7 @@ DATA_PATHS = (
     "GPX_OUT",
     "TCX_OUT",
     "FIT_OUT",
+    "ORIGINAL_OUT",
     "run_page/data.db",
     "imported.json",
     "src/static/activities.json",
@@ -119,6 +120,7 @@ def code_files(root):
                 "GPX_OUT",
                 "TCX_OUT",
                 "FIT_OUT",
+                "ORIGINAL_OUT",
                 "activities",
                 "Workouts",
                 "PNG_OUT",
@@ -186,7 +188,7 @@ def copy_data(source, target, links=False):
                 out.parent.mkdir(parents=True, exist_ok=True)
                 if out.exists():
                     out.unlink()
-                if links and rel in {"GPX_OUT", "TCX_OUT", "FIT_OUT"}:
+                if links and rel in {"GPX_OUT", "TCX_OUT", "FIT_OUT", "ORIGINAL_OUT"}:
                     try:
                         os.link(item, out)
                         continue
@@ -223,9 +225,14 @@ class Config:
         self.birth_month = values.get("birth_month", "1989-03")
         self.days = int(values.get("refresh_days", 30))
         self.garmin_region = values.get("garmin_region", "cn")
+        self.global_sync = values.get("global_sync", False)
+        self.global_sync_limit = int(values.get("global_sync_limit", 25))
         self.timeout = int(values.get("command_timeout", 1800))
         if (
             self.days < 1
+            or not isinstance(self.global_sync, bool)
+            or not 1 <= self.global_sync_limit <= 1000
+            or (self.global_sync and self.garmin_region != "cn")
             or self.garmin_region not in {"cn", "global"}
             or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_/-]*", self.branch)
             or self.branch in {"master", "main"}

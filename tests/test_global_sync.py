@@ -1,0 +1,333 @@
+"""Cross-region writes use durable receipts, including ambiguous network results."""
+
+import asyncio
+from copy import deepcopy
+from datetime import timedelta
+import json
+from pathlib import Path
+import sqlite3
+import tempfile
+import unittest
+from unittest.mock import patch
+
+from run_page.automation.common import Config, read_json
+from run_page.automation.activity_files import ActivityFile
+from run_page.automation.global_sync import (
+    enqueue_activity,
+    run_sync,
+    sync_status,
+    seed_history,
+)
+from run_page.automation.pipeline import (
+    bootstrap,
+    synchronize,
+    make_backup,
+    restore_archive,
+)
+from tests.test_automation import GPX, RUN_ID, FakeGarmin, seed, summary
+
+
+class FakeGlobal:
+    account = "test-international-account"
+
+    def __init__(self):
+        self.rows = {}
+        self.files = {}
+        self.uploads = []
+        self.updates = []
+        self.deletes = []
+        self.lose_upload_response = False
+        self.lose_delete_response = False
+        self.reject_replacement = False
+        self.fail_update = False
+        self.ignore_update = False
+        self.next_id = 1000
+
+    async def identity(self):
+        return self.account
+
+    async def activities(self):
+        return [
+            dict(
+                activityId=int(key),
+                startTimeGMT=value["summaryDTO"]["startTimeGMT"],
+                duration=value["summaryDTO"]["duration"],
+                distance=value["summaryDTO"]["distance"],
+                activityType=value["activityTypeDTO"],
+            )
+            for key, value in self.rows.items()
+        ]
+
+    async def summary(self, target_id):
+        return deepcopy(self.rows.get(str(target_id)))
+
+    async def upload(self, path):
+        self.uploads.append(str(path))
+        if self.reject_replacement:
+            return {"id": next(iter(self.rows)), "created": False}
+        target_id = str(self.next_id)
+        self.next_id += 1
+        self.rows[target_id] = summary(target_id)
+        self.files[target_id] = Path(path).read_bytes()
+        if self.lose_upload_response:
+            self.lose_upload_response = False
+            raise RuntimeError("unknown upload outcome")
+        return {"id": target_id, "created": True}
+
+    async def update(self, target_id, fields):
+        self.updates.append(str(target_id))
+        if self.fail_update:
+            raise RuntimeError("temporary write failure")
+        if self.ignore_update:
+            return
+        for key, value in fields.items():
+            if key == "summaryDTO":
+                self.rows[str(target_id)][key].update(value)
+            else:
+                self.rows[str(target_id)][key] = deepcopy(value)
+
+    async def delete(self, target_id):
+        self.deletes.append(str(target_id))
+        self.rows.pop(str(target_id), None)
+        self.files.pop(str(target_id), None)
+        if self.lose_delete_response:
+            self.lose_delete_response = False
+            raise RuntimeError("unknown delete outcome")
+
+    async def download(self, target_id):
+        return ActivityFile("gpx", self.files[str(target_id)])
+
+
+class GlobalSyncTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.seed = self.root / "seed"
+        self.seed.mkdir()
+        seed(self.seed)
+        self.cfg = Config(
+            self.root / "absent",
+            source=self.root / "code",
+            state=self.root / "state",
+            global_sync=True,
+            global_sync_limit=20,
+        )
+        self.cfg.source.mkdir()
+        bootstrap(self.cfg, self.seed)
+        self.remote = FakeGlobal()
+
+    def queue(self, value=None, content=GPX):
+        value = value or summary("100")
+        path = self.cfg.current / "ORIGINAL_OUT/100.gpx"
+        path.parent.mkdir(exist_ok=True)
+        path.write_bytes(content)
+        return enqueue_activity(
+            self.cfg.current / "run_page/data.db",
+            "100",
+            value,
+            "ORIGINAL_OUT/100.gpx",
+            original=True,
+        )
+
+    def execute(self, **kwargs):
+        return asyncio.run(run_sync(self.cfg, self.remote, **kwargs))
+
+    def test_uploads_once_and_only_source_changes_trigger_metadata_updates(self):
+        self.queue()
+        self.execute()
+        self.assertEqual(len(self.remote.uploads), 1)
+        self.assertEqual(sync_status(self.cfg)["counts"], {"done": 1})
+        self.queue()
+        self.execute()
+        self.assertEqual(len(self.remote.uploads), 1)
+        changed = summary("100")
+        changed["activityName"] = "Changed name"
+        changed["summaryDTO"]["distance"] = 1250
+        self.queue(changed)
+        self.execute()
+        self.assertEqual(len(self.remote.uploads), 1)
+        self.assertEqual(self.remote.rows["1000"]["activityName"], "Changed name")
+        self.assertEqual(self.remote.rows["1000"]["summaryDTO"]["distance"], 1250)
+
+    def test_existing_activity_is_adopted_without_upload_and_not_owned(self):
+        self.remote.rows["2000"] = summary("2000")
+        self.queue()
+        self.execute()
+        self.assertEqual(self.remote.uploads, [])
+        self.assertEqual(sync_status(self.cfg)["counts"], {"done": 1})
+        self.assertFalse(sync_status(self.cfg)["entries"][0]["owned"])
+
+    def test_unknown_upload_is_reconciled_instead_of_blindly_reuploaded(self):
+        self.queue()
+        self.remote.lose_upload_response = True
+        self.execute()
+        self.execute()
+        self.assertEqual(len(self.remote.uploads), 1)
+        self.assertEqual(sync_status(self.cfg)["counts"], {"done": 1})
+
+    def test_metadata_failure_retries_without_another_upload(self):
+        self.queue()
+        self.remote.fail_update = True
+        self.execute()
+        self.assertEqual(len(self.remote.uploads), 1)
+        self.remote.fail_update = False
+        self.execute()
+        self.assertEqual(len(self.remote.uploads), 1)
+        self.assertEqual(sync_status(self.cfg)["counts"], {"done": 1})
+
+    def test_success_response_with_ignored_changes_does_not_mark_synced(self):
+        changed = summary("100")
+        changed["activityName"] = "Must be read back"
+        self.queue(changed)
+        self.remote.ignore_update = True
+        self.execute()
+        self.assertNotEqual(sync_status(self.cfg)["counts"], {"done": 1})
+
+    def test_ambiguous_existing_activities_are_not_overwritten(self):
+        self.remote.rows = {"2000": summary("2000"), "2001": summary("2001")}
+        self.queue()
+        self.execute()
+        self.assertEqual(self.remote.uploads, [])
+        self.assertEqual(self.remote.updates, [])
+        self.assertEqual(sync_status(self.cfg)["counts"], {"blocked": 1})
+
+    def test_account_switch_is_rejected_before_any_writes(self):
+        self.queue()
+        self.execute()
+        self.remote.account = "different-account"
+        changed = summary("100")
+        changed["activityName"] = "Another source version"
+        self.queue(changed)
+        with self.assertRaisesRegex(RuntimeError, "account"):
+            self.execute()
+        self.assertEqual(len(self.remote.uploads), 1)
+
+    def test_snapshot_failure_never_enqueues_partial_source_data(self):
+        before = self.cfg.current
+        with self.assertRaises(RuntimeError):
+            synchronize(self.cfg, client=FakeGarmin(ids=("100", "200"), fail="200"))
+        self.assertEqual(self.cfg.current, before)
+        self.assertEqual(sync_status(self.cfg)["counts"], {})
+
+    def test_normal_scan_and_pending_retry_do_not_require_visible_page_changes(self):
+        synchronize(self.cfg, client=FakeGarmin())
+        self.assertEqual(sync_status(self.cfg)["counts"], {"pending": 1})
+        self.execute()
+        synchronize(self.cfg, client=FakeGarmin())
+        self.execute()
+        self.assertEqual(len(self.remote.uploads), 1)
+
+    def test_dry_run_never_writes_to_destination(self):
+        self.queue()
+        planned = self.execute(dry_run=True)
+        self.assertEqual(planned["plan"], {"new_candidate": 1})
+        self.remote.rows["2000"] = summary("2000")
+        planned = self.execute(dry_run=True)
+        self.assertEqual(planned["plan"], {"existing_match": 1})
+        self.assertEqual(self.remote.uploads, [])
+        self.assertEqual(self.remote.updates, [])
+        self.assertEqual(sync_status(self.cfg)["counts"], {"pending": 1})
+
+    def test_replacement_verifies_new_file_before_retiring_owned_previous(self):
+        self.queue()
+        self.execute()
+        self.queue(content=GPX + b"\n")
+        self.execute()
+        self.assertEqual(len(self.remote.uploads), 2)
+        self.assertEqual(self.remote.deletes, ["1000"])
+        self.assertEqual(set(self.remote.rows), {"1001"})
+        self.assertEqual(sync_status(self.cfg)["counts"], {"done": 1})
+
+    def test_existing_adopted_activities_are_never_deleted(self):
+        self.remote.rows["2000"] = summary("2000")
+        self.queue()
+        self.execute()
+        self.queue(content=GPX + b"\n")
+        self.execute()
+        self.assertEqual(self.remote.uploads, [])
+        self.assertEqual(self.remote.deletes, [])
+        self.assertEqual(sync_status(self.cfg)["counts"], {"blocked": 1})
+
+    def test_replacement_duplicate_keeps_old_activity_and_remains_incomplete(self):
+        self.queue()
+        self.execute()
+        self.queue(content=GPX + b"\n")
+        self.remote.reject_replacement = True
+        self.execute()
+        self.assertEqual(self.remote.deletes, [])
+        self.assertEqual(set(self.remote.rows), {"1000"})
+        self.assertEqual(sync_status(self.cfg)["counts"], {"blocked": 1})
+
+    def test_lost_delete_response_resumes_without_uploading_a_third_version(self):
+        self.queue()
+        self.execute()
+        self.queue(content=GPX + b"\n")
+        self.remote.lose_delete_response = True
+        self.execute()
+        self.execute()
+        self.assertEqual(len(self.remote.uploads), 2)
+        self.assertEqual(self.remote.deletes, ["1000"])
+        self.assertEqual(sync_status(self.cfg)["counts"], {"done": 1})
+
+    def test_lost_replacement_upload_response_is_reconciled_before_retirement(self):
+        self.queue()
+        self.execute()
+        self.queue(content=GPX + b"\n")
+        self.remote.lose_upload_response = True
+        self.execute()
+        self.execute()
+        self.assertEqual(len(self.remote.uploads), 2)
+        self.assertEqual(self.remote.deletes, ["1000"])
+        self.assertEqual(sync_status(self.cfg)["counts"], {"done": 1})
+
+    def test_source_change_during_unknown_upload_is_not_falsely_confirmed(self):
+        self.queue()
+        self.remote.lose_upload_response = True
+        self.execute()
+        self.queue(content=GPX + b"\n")
+        self.execute()
+        self.assertEqual(len(self.remote.uploads), 1)
+        self.assertEqual(self.remote.deletes, [])
+        self.assertEqual(sync_status(self.cfg)["counts"], {"blocked": 1})
+
+    def test_description_change_is_delivered_when_web_json_has_not_changed(self):
+        class WithDescription(FakeGarmin):
+            async def summary(self, source_id):
+                return {**summary(source_id), "description": "Source note changed"}
+
+        synchronize(self.cfg, client=FakeGarmin())
+        self.execute()
+        before = read_json(self.cfg.current / "src/static/activities.json")
+        synchronize(self.cfg, client=WithDescription())
+        self.assertEqual(
+            read_json(self.cfg.current / "src/static/activities.json"), before
+        )
+        self.execute()
+        self.assertEqual(self.remote.rows["1000"]["description"], "Source note changed")
+        self.assertEqual(len(self.remote.uploads), 1)
+
+    def test_queue_receipts_survive_complete_backup_and_restore(self):
+        self.queue()
+        self.execute()
+        make_backup(self.cfg, local_only=True)
+        restored = self.root / "restored"
+        restore_archive(self.cfg.state / "latest-backup.tar.gz", restored)
+        with sqlite3.connect(restored / "run_page/data.db") as db:
+            self.assertEqual(
+                db.execute(
+                    "SELECT target_id,owned,phase FROM automation_global_sync"
+                ).fetchone(),
+                ("1000", 1, "done"),
+            )
+        self.assertEqual((restored / "ORIGINAL_OUT/100.gpx").read_bytes(), GPX)
+
+    def test_first_history_queue_includes_previously_downloaded_files(self):
+        self.assertEqual(seed_history(self.cfg), 1)
+        self.assertEqual(seed_history(self.cfg), 0)
+        self.execute(source_client=FakeGarmin())
+        self.assertEqual(len(self.remote.uploads), 1)
+
+
+if __name__ == "__main__":
+    unittest.main()

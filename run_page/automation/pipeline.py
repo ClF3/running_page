@@ -118,7 +118,9 @@ def synchronize(config, full=False, client=None):
     async def execute():
         active = client or create_client(config)
         try:
-            return await sync_snapshot(path, active, config.days, full)
+            return await sync_snapshot(
+                path, active, config.days, full, queue_global=config.global_sync
+            )
         finally:
             if client is None:
                 await active.close()
@@ -477,6 +479,8 @@ def make_backup(config, local_only=False):
                 "birth_month": config.birth_month,
                 "refresh_days": config.days,
                 "garmin_region": config.garmin_region,
+                "global_sync": config.global_sync,
+                "global_sync_limit": config.global_sync_limit,
                 "repository": config.repository,
                 "backup_branch": config.branch,
             },

@@ -146,3 +146,53 @@ pnpm test:frontend
 ```
 
 测试使用假 Garmin 服务、临时数据库和本地 bare Git 仓库，不调用真实佳明、Cloudflare 或 GitHub。覆盖个人 Key 换令牌、缓存与续领、地区及 Key 变更、真实 FIT 编解码、无 GPS 活动、损坏文件整轮回退、旧 ID 迁移、上传结果未知、备份恢复和推送重试。
+
+## 国区活动同步到国际区
+
+国区仍用 Personal API Key 下载。国际区上传使用独立 OAuth 会话，通过一次交互登录和验证码认证获得，后台自动续期访问令牌；不保存账号密码。会话失效或被撤销后需要重新登录。官方 [Personal API 接口文档](https://developer.garmin.com/gc-developer-program/personal/swagger-docs/)目前只列出读取端点，国际区上传使用 Connect 会话接口。
+
+在 violet 上首次登录并启用：
+
+```sh
+ssh -t violet /data/tianyi/running-page/current/ops/global-login --enable
+```
+
+提示中输入**国际区**账号、密码和验证码。命令先保存权限为 0600 的会话，再进行只读对账，成功后将 `config/config.json` 的 `global_sync` 设为 `true`，并开始首批同步。后续复用既有每小时任务。若已导出国际区的 Garth 会话，可将文件安全保存为 `config/garmin-global-session.txt`，执行：
+
+```sh
+/data/tianyi/running-page/current/ops/global-login --enable --import-file /config/garmin-global-session.txt
+```
+
+会话只保存在 `state/private/garmin-global-session.txt` 或私有配置文件中，不进入 GitHub、网页构建、备份归档或日志。更换会话时会检查国际区账号与已绑定目标是否一致，避免换号后沿用原账号的上传映射。
+
+### 同步行为
+
+- 首次对全部本地活动建立待同步清单，分页读取国际区全部跑步活动。以 UTC 开始时间、时长、距离识别已有活动，名称不参与识别。唯一匹配时记录国区 ID → 国际区 ID；多条匹配时标为 `blocked`，等待人工指定，不任意覆盖。
+- 本地已有 GPX/FIT 不代表上传成功。缺少原始文件时重新读取国区摘要和原始 FIT/TCX/GPX，保留传感器与室内跑数据；下载成功才处理上传。
+- 每小时扫描新增及最近 30 天活动时，对原始文件及同步字段计算指纹。名称、说明、类型、开始时间、距离、用时、心率、爬升等发生变化时入队，与网页是否需要重新构建无关。历史修改仍可通过 `refresh --all` 检查。
+- 队列、目标账号绑定、目标活动 ID、确认过的版本和未完成操作均存入 `run_page/data.db`，随完整备份恢复。上传、修改或删除前先提交操作状态；网络中断后先对账，再继续，上传 POST 不在网络层盲目重试。
+- 上传后同步可编辑字段并读回核对，不复制国际区的账号、隐私、装备、收藏或社交数据。成功才记为 `done`；读取到 HTTP 200 本身不代表活动导入成功，会核对 `detailedImportResult`。
+- 原始文件变化时，仅允许替换本工具明确创建的活动。先上传新版本、读回摘要、下载核对原始文件，再校验旧活动的归属与原始文件，最后删除旧版本并确认已删除。已有活动的认领不授予删除权限。
+- 如果服务器将新版本判为旧活动的重复导入，或新旧原始文件核验失败，保留旧活动并记为 `blocked`。不会通过先删除旧活动来绕过服务器判重，也不会将未完成的轨迹替换标为成功。
+- 每轮默认最多处理 25 条，优先近期记录，单轮国际区处理预算 10 分钟。尚未处理或失败的条目保留到后续轮次。可用 `global_sync_limit` 调整批量。国际区失败单独记入 `jobs.global-sync`，不阻止完整网页版本发布；源站或发布失败时，也会尝试补传上次已完整下载的队列。
+
+### 查看、补传及处理冲突
+
+```sh
+# 状态含各阶段数量及最多 100 条记录的简要状态
+/data/tianyi/running-page/current/ops/run status
+
+# 建立全部历史清单并对账；只改本地队列，不写国际区
+/data/tianyi/running-page/current/ops/run global-sync --backfill --dry-run
+
+# 手动多处理一批；仍受单轮 10 分钟预算约束
+/data/tianyi/running-page/current/ops/run global-sync --backfill --limit 100
+
+# 明确选择国际区已有活动，解决多条匹配；所选活动会保留为非本工具创建
+/data/tianyi/running-page/current/ops/run global-link --source-id <国区ID> --target-id <国际区ID>
+
+# 修复冲突后重试被阻止的条目
+/data/tianyi/running-page/current/ops/run global-sync --retry-blocked
+```
+
+设计参考：[dailysync-rev](https://github.com/gooin/dailysync-rev/tree/b51c7e2b947d1f2ffe32b3381e2c0995a214877e) 的原始文件上传、重复活动响应与持久进度处理。本仓库独立实现 Python 队列、修改同步、完整分页、读回验证和中断恢复，不依赖其 GitHub Actions 或账号密码常驻配置。

@@ -1,0 +1,46 @@
+#!/bin/sh
+# One interactive login; routine jobs keep using renewable private OAuth tokens.
+set -eu
+project_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
+. "$project_root/ops/environment"
+if [ "$running_page_user_mode" -eq 0 ] && [ "$(id -u)" -ne 0 ]; then
+  exec sudo "$project_root/ops/global-login" "$@"
+fi
+running_page_enable_global=0
+if [ "${1:-}" = --enable ]; then
+  running_page_enable_global=1
+  shift
+fi
+docker compose -f "$project_root/ops/compose.yaml" run --rm --no-deps \
+  --interactive=true runner global-login "$@"
+if [ "$running_page_enable_global" -eq 1 ]; then
+  running_page_preflight=$(mktemp "$RUNNING_PAGE_HOST_STATE/.global-preflight.XXXXXXXX")
+  trap 'rm -f "$running_page_preflight"' EXIT
+  "$project_root/ops/run" global-sync --backfill --dry-run > "$running_page_preflight"
+  python3 - "$running_page_preflight" "$RUNNING_PAGE_HOST_CONFIG/config.json" <<'PY'
+import json, os, sys, tempfile
+from pathlib import Path
+result=json.loads(Path(sys.argv[1]).read_text())
+if result.get('dry_run') is not True or 'destination_activities' not in result:
+    raise SystemExit('Preflight did not finish; retry ops/global-login --enable after the current job')
+path=Path(sys.argv[2])
+values=json.loads(path.read_text())
+values['global_sync']=True
+values.setdefault('global_sync_limit',25)
+fd,name=tempfile.mkstemp(prefix='.global-config-',dir=path.parent)
+try:
+    with os.fdopen(fd,'w') as stream:
+        os.fchmod(stream.fileno(),0o600)
+        json.dump(values,stream,indent=2)
+        stream.write('\n')
+        stream.flush()
+        os.fsync(stream.fileno())
+    os.replace(name,path)
+finally:
+    Path(name).unlink(missing_ok=True)
+print('International activity sync enabled; existing history is queued for reconciliation.')
+PY
+  "$project_root/ops/run" global-sync --backfill
+else
+  echo 'Session saved. To verify and enable hourly delivery: ops/global-login --enable'
+fi

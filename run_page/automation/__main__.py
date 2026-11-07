@@ -17,6 +17,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from .common import Busy, Config, job_lock, read_json, run, utcnow, write_json
 from .garmin import authentication_status
+from .global_client import auth_status as global_auth_status, login as global_login
+from .global_sync import (
+    deliver as deliver_global,
+    link_activity,
+    sync_status as global_sync_status,
+)
 from .pipeline import (
     bootstrap,
     make_backup,
@@ -89,12 +95,44 @@ def main(argv=None):
     rollback.add_argument("--to", required=True, dest="release")
     backup = sub.add_parser("backup")
     backup.add_argument("--local-only", action="store_true")
+    global_sync = sub.add_parser(
+        "global-sync", help="Deliver queued CN activities to the international account"
+    )
+    global_sync.add_argument(
+        "--backfill", action="store_true", help="Include all existing local history"
+    )
+    global_sync.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Queue and reconcile without destination writes",
+    )
+    global_sync.add_argument("--limit", type=int)
+    global_sync.add_argument("--retry-blocked", action="store_true")
+    global_login_parser = sub.add_parser(
+        "global-login", help="Interactive international login; no password stored"
+    )
+    global_login_parser.add_argument("--import-file")
+    global_link = sub.add_parser(
+        "global-link", help="Resolve an ambiguous destination activity explicitly"
+    )
+    global_link.add_argument("--source-id", required=True)
+    global_link.add_argument("--target-id", required=True)
     restore = sub.add_parser("restore")
     restore.add_argument("--archive")
     restore.add_argument("--backup-ref")
     restore.add_argument("--to", required=True)
     args = parser.parse_args(argv)
     config = Config(args.config)
+    if args.command == "global-login":
+        try:
+            global_login(config, args.import_file)
+            return 0
+        except Exception:
+            print(
+                "International login failed; retry interactively or import a valid global session",
+                file=sys.stderr,
+            )
+            return 1
     configure_logging(config)
     if args.command == "status":
         result = {
@@ -110,6 +148,9 @@ def main(argv=None):
             )
         }
         result["garmin_auth"] = authentication_status(config)
+        result["global_auth"] = global_auth_status(config)
+        if (config.state / "current").is_symlink():
+            result["global_sync"] = global_sync_status(config)
         result["credentials"] = {
             "garmin": result["garmin_auth"]["method"] != "not_configured",
             "cloudflare": bool(
@@ -123,11 +164,47 @@ def main(argv=None):
     started = utcnow()
     backup_guard = None
 
-    def save_job(value):
+    def save_job(value, name=None):
         with job_lock(config, "status.lock", blocking=True):
             latest = read_json(config.state / "jobs.json", {})
-            latest[args.command] = value
+            latest[name or args.command] = value
             write_json(config.state / "jobs.json", latest)
+
+    def try_global_sync():
+        if not config.global_sync:
+            return {"skipped": "international synchronization is disabled"}
+        previous = read_json(config.state / "jobs.json", {}).get("global-sync", {})
+        try:
+            outcome = deliver_global(config, backfill=True)
+            healthy = not outcome.get("failed") and not outcome.get("counts", {}).get(
+                "blocked"
+            )
+            job = {
+                "last_attempt": utcnow(),
+                "result": outcome,
+                "consecutive_failures": (
+                    0 if healthy else previous.get("consecutive_failures", 0) + 1
+                ),
+            }
+            if healthy:
+                job["last_success"] = utcnow()
+            elif previous.get("last_success"):
+                job["last_success"] = previous["last_success"]
+            save_job(job, "global-sync")
+            return outcome
+        except Exception:
+            # International writes never prevent a complete website release.
+            save_job(
+                {
+                    **previous,
+                    "last_attempt": utcnow(),
+                    "error": "international_delivery_failed",
+                    "consecutive_failures": previous.get("consecutive_failures", 0) + 1,
+                },
+                "global-sync",
+            )
+            logging.warning("International delivery incomplete; durable queue retained")
+            return {"error": "international_delivery_failed"}
 
     try:
         if args.command == "backup":
@@ -171,9 +248,33 @@ def main(argv=None):
                             logging.warning(
                                 "Previous complete deployment is still pending"
                             )
+                    try_global_sync()
                     raise
-                prepare(config)
-                result["publish"] = publish(config)
+                try:
+                    prepare(config)
+                    result["publish"] = publish(config)
+                finally:
+                    result["global_sync"] = try_global_sync()
+            elif args.command == "global-sync":
+                if args.limit is not None and not 1 <= args.limit <= 1000:
+                    raise RuntimeError(
+                        "International batch limit must be between 1 and 1000"
+                    )
+                result = deliver_global(
+                    config,
+                    backfill=args.backfill,
+                    dry_run=args.dry_run,
+                    limit=args.limit,
+                    retry_blocked=args.retry_blocked,
+                )
+                if not args.dry_run and (
+                    result.get("failed") or result.get("counts", {}).get("blocked")
+                ):
+                    raise RuntimeError(
+                        "International delivery has incomplete activities; inspect status"
+                    )
+            elif args.command == "global-link":
+                result = link_activity(config, args.source_id, args.target_id)
             elif args.command == "build":
                 result = prepare(config) or {"skipped": "no visible changes"}
             elif args.command == "publish":

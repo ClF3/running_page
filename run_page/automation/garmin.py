@@ -380,7 +380,9 @@ def import_activity(database, raw_path, summary, old=None):
         )
 
 
-async def sync_snapshot(snapshot, client, days=30, full=False, now=None):
+async def sync_snapshot(
+    snapshot, client, days=30, full=False, now=None, queue_global=False
+):
     from generator import Generator
     from utils import write_activities_files
 
@@ -398,21 +400,34 @@ async def sync_snapshot(snapshot, client, days=30, full=False, now=None):
         if str(summary.get("activityId")) != source_id:
             raise RuntimeError("Garmin summary activity ID does not match request")
         content = await client.download(source_id)
+        original = (
+            content
+            if isinstance(content, ActivityFile)
+            else ActivityFile("gpx", content)
+        )
+        original_relative = f"ORIGINAL_OUT/{source_id}.gpx"
         if isinstance(content, ActivityFile):
             original = content
             content = original.gpx()
             if original.format in {"fit", "tcx"}:
                 filename = f"{source_id}.{original.format}"
+                original_relative = f"{original.format.upper()}_OUT/{filename}"
                 atomic_write(
                     snapshot / f"{original.format.upper()}_OUT" / filename,
                     original.content,
                 )
                 downloaded_files.add(filename)
+        if queue_global and original.format == "gpx":
+            atomic_write(snapshot / original_relative, original.content)
         content = enrich_gpx(content, summary)
         path = raw / f"{source_id}.gpx"
         atomic_write(path, content)
         # Parsing/import failures abort this disposable snapshot, never current.
         import_activity(database, path, summary, sources.get(source_id))
+        if queue_global:
+            from .global_sync import enqueue_activity
+
+            enqueue_activity(database, source_id, summary, original_relative)
     generator = Generator(str(database))
     try:
         activities = generator.load()

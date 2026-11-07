@@ -9,5 +9,7 @@
   "birth_month": "1989-03",
   "refresh_days": 30,
   "garmin_region": "cn",
+  "global_sync": false,
+  "global_sync_limit": 25,
   "command_timeout": 1800
 }
