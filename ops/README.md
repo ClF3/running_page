@@ -131,6 +131,14 @@ sudo /opt/running-page/current/ops/run upgrade --ref <40位代码提交SHA>
 
 ## 测试
 
+活动类型保留佳明返回的原始 `subtype`，网页 JSON 与 SVG 共用
+`run_page/activity_classification.py`：`indoor_running`、`treadmill_running`
+及已有来源的明确室内类型标记为 `is_indoor`，不再按轨迹缺失、里程或 GPS
+范围推断室内跑。JSON 同时导出独立的 `has_route` 和 `route_status`
+（`available`、`missing`、`invalid`、`insufficient`）。无可用轨迹的活动仍计入
+统计与日历，但不生成地图线路，也不借用城市坐标。网页直接读取导出的标记；
+仅在读取未带标记的旧 JSON 时兼容旧 `indoor` / `treadmill` 标签。
+
 ```sh
 PYTHONPATH=.:run_page .venv/bin/python -m unittest tests.test_automation -v
 PYTHONPATH=.:run_page .venv/bin/python -m unittest discover -s tests -p 'test_*.py'

@@ -77,18 +77,23 @@ class GeneratorPrivacyTest(unittest.TestCase):
         self.assertEqual(stored_route, route)
         self.assertEqual(activities[0]["summary_polyline"], route)
 
-    def test_load_marks_no_route_indoor_only_in_payload(self) -> None:
+    def test_missing_route_does_not_override_source_activity_type(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db_path = Path(tmp) / "data.db"
             generator = Generator(db_path)
-            generator.sync_from_app([fake_activity(distance=150, summary_polyline="")])
+            generator.sync_from_app(
+                [fake_activity(distance=5000, subtype="running", summary_polyline="")]
+            )
 
             activities = generator.load()
             stored_route, stored_subtype = fetch_route_and_subtype(db_path)
 
         self.assertEqual(stored_route, "")
-        self.assertEqual(stored_subtype, "")
-        self.assertEqual(activities[0]["subtype"], "indoor")
+        self.assertEqual(stored_subtype, "running")
+        self.assertEqual(activities[0]["subtype"], "running")
+        self.assertFalse(activities[0]["is_indoor"])
+        self.assertFalse(activities[0]["has_route"])
+        self.assertEqual(activities[0]["route_status"], "missing")
 
     def test_privacy_filter_runs_once_before_saving(self) -> None:
         route = polyline.encode(

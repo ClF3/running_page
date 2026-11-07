@@ -1,6 +1,7 @@
 import React from 'react';
 import { pathForRun } from '@/utils/geoUtils';
 import type { Activity } from '@/utils/utils';
+import { isIndoorRun } from '@/utils/activityFlags';
 import { NO_ROUTE_DATA, INVALID_ROUTE_DATA, INDOOR_COLOR } from '@/utils/const';
 import styles from './style.module.css';
 
@@ -33,8 +34,7 @@ const RoutePreview: React.FC<RoutePreviewProps> = ({
     indoor: boolean;
   }> = activitiesWithRoutes.map((activity, index) => {
     const path = pathForRun(activity);
-    const indoor =
-      activity.subtype === 'indoor' || activity.subtype === 'treadmill';
+    const indoor = isIndoorRun(activity);
     // Use different colors for multiple routes
     const colors = ['#e74c3c', '#3498db', '#2ecc71', '#f39c12', '#9b59b6'];
     const color = indoor ? INDOOR_COLOR : colors[index % colors.length];

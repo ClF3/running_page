@@ -69,6 +69,7 @@ const NIGHT_RUN_TITLE = IS_CHINESE ? '夜晚跑步' : 'Night Run';
 const RUN_GENERIC_TITLE = IS_CHINESE ? '跑步' : 'Run';
 const RUN_TRAIL_TITLE = IS_CHINESE ? '越野跑' : 'Trail Run';
 const RUN_TREADMILL_TITLE = IS_CHINESE ? '跑步机' : 'Treadmill Run';
+const RUN_INDOOR_TITLE = IS_CHINESE ? '室内跑步' : 'Indoor Run';
 const HIKING_TITLE = IS_CHINESE ? '徒步' : 'Hiking';
 const CYCLING_TITLE = IS_CHINESE ? '骑行' : 'Cycling';
 const SKIING_TITLE = IS_CHINESE ? '滑雪' : 'Skiing';
@@ -101,6 +102,7 @@ const ACTIVITY_TYPES = {
   RUN_GENERIC_TITLE,
   RUN_TRAIL_TITLE,
   RUN_TREADMILL_TITLE,
+  RUN_INDOOR_TITLE,
   HIKING_TITLE,
   CYCLING_TITLE,
   SKIING_TITLE,

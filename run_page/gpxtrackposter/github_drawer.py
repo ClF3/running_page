@@ -54,7 +54,7 @@ class GithubDrawer(TracksDrawer):
 
     def _has_indoor_track(self, tracks):
         """Check if any track in the list is an indoor activity."""
-        return any(getattr(t, "subtype", None) == "indoor" for t in tracks)
+        return any(t.is_indoor for t in tracks)
 
     def draw(self, dr: svgwrite.Drawing, size: XY, offset: XY):
         if self.poster.tracks is None:

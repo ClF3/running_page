@@ -185,6 +185,41 @@ test('geo utilities decode routes and produce route feature collections', () => 
   });
 });
 
+test('routes consume exported indoor and availability flags', () => {
+  const indoor = run({
+    subtype: 'indoor_running',
+    is_indoor: true,
+    has_route: true,
+  });
+  const outdoor = run({ subtype: 'indoor', is_indoor: false, has_route: true });
+  const withoutRoute = run({
+    subtype: 'running',
+    is_indoor: false,
+    has_route: false,
+    route_status: 'missing',
+  });
+  const features = geoUtils.geoJsonForRuns([
+    indoor,
+    outdoor,
+    withoutRoute,
+  ]).features;
+  assert.equal(features.length, 2);
+  assert.equal(features[0].properties.indoor, true);
+  assert.equal(features[1].properties.indoor, false);
+  assert.notEqual(features[0].properties.color, features[1].properties.color);
+  assert.deepEqual(geoUtils.pathForRun(withoutRoute), []);
+  assert.match(utils.titleForShow(withoutRoute), /No map data/);
+  assert.equal(utils.titleForRun(indoor), 'Indoor Run');
+  assert.equal(utils.titleForRun(outdoor), 'Morning Run');
+  assert.equal(utils.titleForRun(withoutRoute), 'Morning Run');
+});
+
+test('incomplete routes never turn into city coordinates', () => {
+  // The same point twice, at (0, 0).
+  assert.deepEqual(geoUtils.pathForRun(run({ summary_polyline: '????' })), []);
+  assert.deepEqual(geoUtils.pathForRun(run({ summary_polyline: '_' })), []);
+});
+
 test('weekly run summaries group activities by monday-starting weeks', () => {
   const activities = [
     run({

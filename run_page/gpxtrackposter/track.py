@@ -19,6 +19,8 @@ from garmin_fit_sdk.util import FIT_EPOCH_S
 from rich import print
 from tcxreader.tcxreader import TCXReader
 
+from activity_classification import classify_route, is_indoor_activity
+
 from .exceptions import TrackLoadError
 from .utils import parse_datetime_to_local, get_normalized_sport_type
 
@@ -53,6 +55,14 @@ class Track:
         self.type = "Run"
         self.subtype = None  # for fit file
         self.device = ""
+
+    @property
+    def is_indoor(self):
+        return is_indoor_activity(self.subtype)
+
+    @property
+    def has_route(self):
+        return classify_route(self.polyline_str)[0] == "available"
 
     def load_gpx(self, file_name):
         """
@@ -128,8 +138,8 @@ class Track:
         self.start_time_local = start_time
         self.end_time = start_time + activity.elapsed_time
         self.length = float(activity.distance)
-        summary_polyline = activity.summary_polyline
-        polyline_data = polyline.decode(summary_polyline) if summary_polyline else []
+        self.polyline_str = activity.summary_polyline or ""
+        _, polyline_data = classify_route(self.polyline_str)
         self.polylines = [[s2.LatLng.from_degrees(p[0], p[1]) for p in polyline_data]]
         self.run_id = activity.run_id
         self.type = get_normalized_sport_type(activity.type)

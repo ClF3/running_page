@@ -1,4 +1,5 @@
 import { chinaCities } from '@/static/city';
+import { isIndoorRun } from './activityFlags';
 import {
   MUNICIPALITY_CITIES_ARR,
   RUN_TITLES,
@@ -25,6 +26,9 @@ export interface Activity {
   moving_time: string;
   type: string;
   subtype: string;
+  is_indoor?: boolean;
+  has_route?: boolean;
+  route_status?: 'available' | 'missing' | 'invalid' | 'insufficient';
   start_date: string;
   start_date_local: string;
   location_country?: string | null;
@@ -49,7 +53,9 @@ const titleForShow = (run: Activity): string => {
         : run.name;
   }
   return `${name} ${date} ${distance} ${DIST_UNIT} ${
-    !run.summary_polyline ? '(No map data for this run)' : ''
+    run.has_route === false || !run.summary_polyline
+      ? '(No map data for this run)'
+      : ''
   }`;
 };
 
@@ -198,6 +204,7 @@ const intComma = (x = '') => {
 
 const getActivitySport = (act: Activity): string => {
   if (act.type === 'Run') {
+    if (isIndoorRun(act)) return ACTIVITY_TYPES.RUN_INDOOR_TITLE;
     if (act.subtype === 'generic') {
       const runDistance = act.distance / 1000;
       if (runDistance > 20 && runDistance < 40) {
@@ -207,8 +214,6 @@ const getActivitySport = (act: Activity): string => {
       }
       return ACTIVITY_TYPES.RUN_GENERIC_TITLE;
     } else if (act.subtype === 'trail') return ACTIVITY_TYPES.RUN_TRAIL_TITLE;
-    else if (act.subtype === 'treadmill')
-      return ACTIVITY_TYPES.RUN_TREADMILL_TITLE;
     else return ACTIVITY_TYPES.RUN_GENERIC_TITLE;
   } else if (act.type === 'hiking') {
     return ACTIVITY_TYPES.HIKING_TITLE;
@@ -236,6 +241,9 @@ const titleForRun = (run: Activity): string => {
     if (city && city.length > 0 && activity_sport.length > 0) {
       return `${city} ${activity_sport}`;
     }
+  }
+  if (run.type === 'Run' && isIndoorRun(run)) {
+    return ACTIVITY_TYPES.RUN_INDOOR_TITLE;
   }
   // 3. use time+length if location or type is not available
   const runDistance = run.distance / 1000;

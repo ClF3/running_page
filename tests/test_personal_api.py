@@ -384,7 +384,9 @@ class PersonalPipelineTest(unittest.TestCase):
         self.cfg = Config(source=self.source, state=self.root / "state")
         bootstrap(self.cfg, self.seed)
 
-    def api_client(self, *, fail=False, indoor=False, new=False):
+    def api_client(
+        self, *, fail=False, indoor=False, new=False, activity_type="running"
+    ):
         self.original = real_fit(indoor=indoor)
         records = ["100", "200"] if fail or new else ["100"]
 
@@ -402,9 +404,9 @@ class PersonalPipelineTest(unittest.TestCase):
                 )
             source_id = path.rsplit("/", 1)[-1]
             if path.startswith("/activity-service/"):
-                return httpx.Response(
-                    200, json=summary(source_id, hour=1 if source_id == "200" else 0)
-                )
+                dto = summary(source_id, hour=1 if source_id == "200" else 0)
+                dto["activityTypeDTO"]["typeKey"] = activity_type
+                return httpx.Response(200, json=dto)
             if path.startswith("/download-service/files/"):
                 raw = (
                     b"broken FIT"
@@ -451,13 +453,33 @@ class PersonalPipelineTest(unittest.TestCase):
         self.assertEqual((recovered / "FIT_OUT/100.fit").read_bytes(), self.original)
         self.assertFalse((recovered / "private").exists())
 
-    def test_indoor_fit_uses_authoritative_summary_without_gps(self):
+    def test_route_less_fit_does_not_override_summary_running_type(self):
         self.sync(indoor=True)
         row = read_json(self.cfg.current / "src/static/activities.json")[0]
         self.assertEqual(row["run_id"], RUN_ID)
         self.assertEqual(row["distance"], 1100)
         self.assertEqual(row["average_speed"], 3.8)
         self.assertFalse(row["summary_polyline"])
+        self.assertEqual(row["subtype"], "running")
+        self.assertFalse(row["is_indoor"])
+        self.assertFalse(row["has_route"])
+        self.assertEqual(row["route_status"], "missing")
+
+    def test_garmin_indoor_types_survive_sync_without_normalizing_subtype(self):
+        for activity_type in ("indoor_running", "treadmill_running"):
+            with self.subTest(activity_type=activity_type):
+                self.sync(indoor=True, activity_type=activity_type)
+                row = read_json(self.cfg.current / "src/static/activities.json")[0]
+                self.assertEqual(row["subtype"], activity_type)
+                self.assertTrue(row["is_indoor"])
+                self.assertFalse(row["has_route"])
+
+    def test_garmin_indoor_type_takes_priority_even_with_gps(self):
+        self.sync(activity_type="indoor_running")
+        row = read_json(self.cfg.current / "src/static/activities.json")[0]
+        self.assertEqual(row["subtype"], "indoor_running")
+        self.assertTrue(row["is_indoor"])
+        self.assertTrue(row["has_route"])
 
     def test_one_broken_fit_rolls_back_the_whole_round(self):
         previous = self.cfg.current

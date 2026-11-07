@@ -16,6 +16,8 @@ from sqlalchemy import (
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 
+from activity_classification import activity_flags
+
 Base = declarative_base()
 
 
@@ -78,6 +80,7 @@ class Activity(Base):
         if self.streak:
             out["streak"] = self.streak
 
+        out.update(activity_flags(self.subtype, self.summary_polyline))
         return out
 
 

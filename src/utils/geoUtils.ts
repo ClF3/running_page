@@ -27,7 +27,7 @@ import {
   WALKING_COLOR,
 } from './const';
 import type { Activity } from './utils';
-import { locationForRun } from './utils';
+import { isIndoorRun } from './activityFlags';
 import { fetchJson } from './fetchJson';
 
 export type Coordinate = [number, number];
@@ -40,23 +40,29 @@ export interface IViewState {
 
 export const pathForRun = (run: Activity): Coordinate[] => {
   try {
-    if (!run.summary_polyline) {
+    if (run.has_route === false || !run.summary_polyline) {
       return [];
     }
     const c = mapboxPolyline.decode(run.summary_polyline);
+    if (
+      c.length < 2 ||
+      c.some(
+        ([lat, lon]) =>
+          !Number.isFinite(lat) ||
+          !Number.isFinite(lon) ||
+          Math.abs(lat) > 90 ||
+          Math.abs(lon) > 180
+      ) ||
+      c.every(([lat, lon]) => lat === c[0][0] && lon === c[0][1])
+    ) {
+      return [];
+    }
     // reverse lat long for mapbox
     c.forEach((arr) => {
       [arr[0], arr[1]] = !NEED_FIX_MAP
         ? [arr[1], arr[0]]
         : gcoord.transform([arr[1], arr[0]], gcoord.GCJ02, gcoord.WGS84);
     });
-    // try to use location city coordinate instead, if runpath is incomplete
-    if (c.length === 2 && String(c[0]) === String(c[1])) {
-      const { coordinate } = locationForRun(run);
-      if (coordinate?.[0] && coordinate?.[1]) {
-        return [coordinate, coordinate];
-      }
-    }
     return c;
   } catch (_err) {
     return [];
@@ -68,7 +74,7 @@ const colorForRun = (run: Activity): string => {
 
   switch (run.type) {
     case 'Run': {
-      if (run.subtype === 'indoor' || run.subtype === 'treadmill') {
+      if (isIndoorRun(run)) {
         return INDOOR_COLOR;
       }
       if (run.subtype === 'trail') {
@@ -110,7 +116,7 @@ export const geoJsonForRuns = (
       type: 'Feature',
       properties: {
         color: color,
-        indoor: run.subtype === 'indoor' || run.subtype === 'treadmill',
+        indoor: isIndoorRun(run),
       },
       geometry: {
         type: 'LineString',

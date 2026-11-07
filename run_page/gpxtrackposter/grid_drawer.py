@@ -79,7 +79,7 @@ class GridDrawer(TracksDrawer):
                 color = self.poster.colors.get("special2") or self.poster.colors.get(
                     "special"
                 )
-            is_indoor = getattr(tr, "subtype", None) == "indoor"
+            is_indoor = tr.is_indoor
             polyline = dr.polyline(
                 points=line,
                 stroke=color,

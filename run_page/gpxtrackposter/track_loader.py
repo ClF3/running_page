@@ -109,6 +109,8 @@ class TrackLoader:
         for activity in activities:
             t = Track()
             t.load_from_db(activity)
+            if is_grid and not t.has_route:
+                continue
             tracks.append(t)
         print(f"All tracks: {len(tracks)}")
         tracks = self._filter_tracks(tracks)

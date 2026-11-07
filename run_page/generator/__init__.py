@@ -3,7 +3,6 @@ import os
 import sys
 
 import arrow
-import polyline as polyline_codec
 import stravalib
 from gpxtrackposter import track_loader
 from sqlalchemy import func
@@ -22,11 +21,6 @@ def _env_flag(name, default=False):
 
 
 IGNORE_BEFORE_SAVING = _env_flag("IGNORE_BEFORE_SAVING")
-
-
-# Bounding box spread threshold (degrees) for indoor activity detection.
-# 0.002° ≈ 220m — treadmill GPS drift typically stays within this range.
-INDOOR_SPREAD_THRESHOLD = float(os.getenv("INDOOR_SPREAD_THRESHOLD", "0.002"))
 
 
 class Generator:
@@ -201,70 +195,6 @@ class Generator:
             activity.streak = streak  # type: ignore
             last_date = date
             activity_list.append(activity.to_dict())
-
-        activity_list = self._fix_indoor_locations(activity_list)
-
-        return activity_list
-
-    @staticmethod
-    def _fix_indoor_locations(activity_list):
-        """Normalize indoor activities without inventing route geometry.
-
-        Indoor activities are identified by a multi-strategy approach:
-        1. Subtype match: known indoor subtypes from data sources
-           (Garmin FIT "treadmill", Strava/Keep "VirtualRun", etc.)
-        2. No GPS data: activity has distance but empty polyline
-        3. Tiny GPS spread: bounding box < ~10 m (noisy indoor GPS)
-
-        No-route indoor activities intentionally remain route-less. Indoor
-        activities with their own source route keep that route unchanged.
-        """
-        if not activity_list:
-            return activity_list
-
-        INDOOR_SUBTYPES = {
-            "treadmill",  # Garmin FIT sub_sport
-            "indoor",  # generic indoor marker
-            "virtualrun",  # Strava / Keep indoor running
-            "virtual_run",  # alternate form
-        }
-        # ~10 m in degrees (0.0001° ≈ 11 m)
-        TINY_SPREAD_THRESHOLD = 0.0001
-
-        # Classify each activity as indoor or outdoor.
-        classified = []  # (dict, is_indoor)
-        for a in activity_list:
-            subtype = (a.get("subtype") or "").lower()
-            is_indoor = subtype in INDOOR_SUBTYPES
-
-            poly = a.get("summary_polyline") or ""
-            coords = None
-            if poly:
-                try:
-                    coords = polyline_codec.decode(poly)
-                    if len(coords) < 2:
-                        coords = None
-                except Exception:
-                    coords = None
-
-            # Strategy 2: no GPS data but has distance → indoor
-            if not is_indoor and coords is None and a.get("distance", 0) > 100:
-                is_indoor = True
-
-            # Strategy 3: tiny GPS spread → noisy indoor GPS
-            if not is_indoor and coords and len(coords) >= 2:
-                lats = [c[0] for c in coords]
-                lngs = [c[1] for c in coords]
-                spread = max(max(lats) - min(lats), max(lngs) - min(lngs))
-                if spread < TINY_SPREAD_THRESHOLD:
-                    is_indoor = True
-
-            classified.append((a, is_indoor))
-
-        for a, is_indoor in classified:
-            if is_indoor:
-                # Normalize subtype to "indoor" for frontend/SVG consumers.
-                a["subtype"] = "indoor"
 
         return activity_list
 
