@@ -127,23 +127,26 @@ def format_float(f):
 
 
 def parse_datetime_to_local(start_time, end_time, point):
-    if not point:
-        timezone = "Asia/Shanghai"
-    else:
-        # just parse the start time, because start/end maybe different
-        offset = start_time.utcoffset()
-        if offset:
-            return start_time + offset, end_time + offset
+    """Return local wall-clock times using each instant's historical UTC offset."""
+    if point:
         lat, lng = point
-        try:
-            timezone = get_tz(lng=lng, lat=lat)
-        except Exception as e:
-            # just a little trick when tzfpy support windows will delete this
-            print(f"tzfpy error: {e} fallback to timezonefinder")
-            lat, lng = point
-            timezone = tf.timezone_at(lng=lng, lat=lat)
-    tc_offset = datetime.now(pytz.timezone(timezone)).utcoffset()
-    return start_time + tc_offset, end_time + tc_offset
+        name = (
+            get_tz(lng=lng, lat=lat) if tf is None else tf.timezone_at(lng=lng, lat=lat)
+        )
+        zone = pytz.timezone(name)
+    elif start_time.utcoffset():
+        zone = start_time.tzinfo
+    else:
+        zone = pytz.timezone("Asia/Shanghai")
+
+    def local_time(instant):
+        if instant.tzinfo is None:
+            instant = pytz.utc.localize(instant)
+        # Database/export consumers use naive local times; the original GPX
+        # instants remain unchanged and continue to supply stable activity IDs.
+        return instant.astimezone(zone).replace(tzinfo=None)
+
+    return local_time(start_time), local_time(end_time)
 
 
 def get_normalized_sport_type(sport_type):

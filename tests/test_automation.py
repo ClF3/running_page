@@ -176,6 +176,21 @@ class AutomationTest(unittest.TestCase):
         self.assertEqual(rows[0]["average_heartrate"], 155)
         self.assertEqual(rows[0]["start_date_local"], "2026-11-06 09:00:00")
 
+    def test_missing_garmin_local_time_uses_gpx_local_time(self):
+        client = FakeGarmin()
+
+        async def missing_local(source_id):
+            value = summary(source_id)
+            value["summaryDTO"].pop("startTimeLocal")
+            return value
+
+        client.summary = missing_local
+        synchronize(self.cfg, full=True, client=client)
+        rows = read_json(self.cfg.current / "src/static/activities.json")
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["run_id"], RUN_ID)
+        self.assertEqual(rows[0]["start_date_local"], "2026-11-06 08:00:00")
+
     def test_partial_download_failure_cannot_promote_any_changes(self):
         old = self.cfg.current
         with self.assertRaisesRegex(RuntimeError, "interrupted"):

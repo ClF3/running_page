@@ -275,6 +275,36 @@ test('places normalize country aliases and group municipality districts as one c
   );
 });
 
+test('places recognize Hong Kong and Macao address variants within China', () => {
+  const activities = [
+    run({ location_country: '大堂區, 澳門, 519020, 中国' }),
+    run({ location_country: '大堂区, 澳门, 中国' }),
+    run({ location_country: '路氹, 澳門特別行政區, 中国' }),
+    run({ location_country: '湾仔, 香港, 中国' }),
+    run({ location_country: '灣仔, 香港特別行政區, 中国' }),
+    run({ location_country: 'Central, Hong Kong, China' }),
+  ];
+  const hierarchy = locations.buildLocationHierarchy(activities);
+  assert.equal(hierarchy.countryCount, 1);
+  assert.equal(hierarchy.provinceCount, 2);
+  assert.equal(hierarchy.cityCount, 2);
+  assert.equal(hierarchy.unlocatedCount, 0);
+  const china = hierarchy.countries[0];
+  assert.equal(china.countryCode, 'CN');
+  for (const name of ['香港特别行政区', '澳门特别行政区']) {
+    const province = china.children.find((place) => place.name === name);
+    assert.ok(province);
+    assert.equal(province.distanceMeters, 15000);
+    assert.equal(province.children.length, 1);
+    assert.equal(province.children[0].name, name);
+    assert.equal(province.children[0].distanceMeters, 15000);
+    assert.equal(
+      /\p{Script=Han}/u.test(placeNames.getPlaceDisplayName(province)),
+      false
+    );
+  }
+});
+
 test('place aggregation retains partially located mileage without counting unknown cities', () => {
   const hierarchy = locations.buildLocationHierarchy([
     run({ location_country: '辽宁省, 中国', distance: 1000 }),

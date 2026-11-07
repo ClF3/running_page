@@ -4,6 +4,7 @@ import datetime as dt
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 try:
     import svgwrite
@@ -12,7 +13,13 @@ try:
     from run_page.gpxtrackposter.grid_drawer import GridDrawer
     from run_page.gpxtrackposter.poster import Poster
     from run_page.gpxtrackposter.track import Track
-    from run_page.gpxtrackposter.utils import compute_grid, lat2y, lng2x, project
+    from run_page.gpxtrackposter.utils import (
+        compute_grid,
+        lat2y,
+        lng2x,
+        parse_datetime_to_local,
+        project,
+    )
     from run_page.gpxtrackposter.xy import XY
 except ModuleNotFoundError as exc:
     raise unittest.SkipTest(
@@ -21,6 +28,63 @@ except ModuleNotFoundError as exc:
 
 
 class GpxTrackPosterUtilsTest(unittest.TestCase):
+    def test_historical_local_time_uses_activity_date(self) -> None:
+        cases = [
+            (dt.datetime(2026, 2, 2, 6, 22, 42, tzinfo=dt.timezone.utc), 2, 7),
+            (dt.datetime(2026, 7, 2, 6, 22, 42, tzinfo=dt.timezone.utc), 1, 8),
+        ]
+        for start, import_offset, expected_hour in cases:
+            with (
+                self.subTest(start=start),
+                patch("run_page.gpxtrackposter.utils.datetime") as clock,
+            ):
+                clock.now.return_value = dt.datetime(
+                    2026, 1, 1, tzinfo=dt.timezone(dt.timedelta(hours=import_offset))
+                )
+                local_start, local_end = parse_datetime_to_local(
+                    start, start + dt.timedelta(minutes=30), (50.85, 4.35)
+                )
+                expected = start.replace(tzinfo=None, hour=expected_hour)
+                self.assertEqual(local_start.replace(tzinfo=None), expected)
+                self.assertEqual(
+                    local_end.replace(tzinfo=None), expected + dt.timedelta(minutes=30)
+                )
+
+    def test_local_times_follow_a_dst_transition_within_the_activity(self) -> None:
+        start = dt.datetime(2026, 3, 29, 0, 30, tzinfo=dt.timezone.utc)
+        end = start + dt.timedelta(hours=1)
+        local_start, local_end = parse_datetime_to_local(start, end, (48.86, 2.35))
+        self.assertEqual(local_start, dt.datetime(2026, 3, 29, 1, 30))
+        self.assertEqual(local_end, dt.datetime(2026, 3, 29, 3, 30))
+
+    def test_non_utc_gpx_timestamp_is_converted_without_double_offset(self) -> None:
+        start = dt.datetime(
+            2026, 2, 2, 14, 22, 42, tzinfo=dt.timezone(dt.timedelta(hours=8))
+        )
+        local_start, local_end = parse_datetime_to_local(
+            start, start + dt.timedelta(minutes=30), (50.85, 4.35)
+        )
+        self.assertEqual(local_start, dt.datetime(2026, 2, 2, 7, 22, 42))
+        self.assertEqual(local_end, dt.datetime(2026, 2, 2, 7, 52, 42))
+        self.assertEqual(start.hour, 14)
+
+    def test_without_gps_uses_explicit_offset_or_default_for_utc(self) -> None:
+        explicit = dt.datetime(
+            2026, 2, 2, 7, 22, 42, tzinfo=dt.timezone(dt.timedelta(hours=1))
+        )
+        local_start, _ = parse_datetime_to_local(
+            explicit, explicit + dt.timedelta(minutes=30), None
+        )
+        self.assertEqual(local_start, dt.datetime(2026, 2, 2, 7, 22, 42))
+        for start in (
+            dt.datetime(2026, 2, 2, 0),
+            dt.datetime(2026, 2, 2, 0, tzinfo=dt.timezone.utc),
+        ):
+            local_start, _ = parse_datetime_to_local(
+                start, start + dt.timedelta(minutes=30), None
+            )
+            self.assertEqual(local_start, dt.datetime(2026, 2, 2, 8))
+
     def test_compute_grid_packs_requested_count_inside_dimensions(self) -> None:
         size, counts = compute_grid(5, XY(100, 60))
 

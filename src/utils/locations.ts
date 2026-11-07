@@ -54,7 +54,24 @@ for (const [alias, name] of [
 
 const provinces = chinaCities.filter((place) => !place.city);
 const cities = chinaCities.filter((place) => place.city);
-const municipalities = new Set(['北京市', '上海市', '天津市', '重庆市']);
+const singleCityRegions = new Set([
+  '北京市',
+  '上海市',
+  '天津市',
+  '重庆市',
+  '香港特别行政区',
+  '澳门特别行政区',
+]);
+const provinceAliases = new Map([
+  ['香港', '香港特别行政区'],
+  ['香港特別行政區', '香港特别行政区'],
+  ['hong kong', '香港特别行政区'],
+  ['澳门', '澳门特别行政区'],
+  ['澳門', '澳门特别行政区'],
+  ['澳門特別行政區', '澳门特别行政区'],
+  ['macao', '澳门特别行政区'],
+  ['macau', '澳门特别行政区'],
+]);
 const locationCache = new Map<string, RunLocation>();
 
 export const parseActivityLocation = (
@@ -81,18 +98,23 @@ export const parseActivityLocation = (
   let province = '';
   let city = '';
   if (country?.code === 'CN') {
+    const administrativeParts = parts.map(
+      (part) => provinceAliases.get(part.toLowerCase()) ?? part
+    );
     // Prefer the explicitly named prefecture over a district/county in the same address.
-    const cityInfo = cities.find((place) => parts.includes(place.name));
+    const cityInfo = cities.find((place) =>
+      administrativeParts.includes(place.name)
+    );
     const provinceInfo =
-      provinces.find((place) => parts.includes(place.name)) ??
+      provinces.find((place) => administrativeParts.includes(place.name)) ??
       provinces.find(
         (place) => cityInfo && place.province === cityInfo.province
       );
     province = provinceInfo?.name ?? '';
-    city = municipalities.has(province)
+    city = singleCityRegions.has(province)
       ? province
       : (cityInfo?.name ??
-        parts
+        administrativeParts
           .slice()
           .reverse()
           .find((part) =>
