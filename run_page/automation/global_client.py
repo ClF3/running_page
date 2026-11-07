@@ -50,13 +50,15 @@ def _new_auth():
     os.environ["GARTH_TELEMETRY_ENABLED"] = "false"
     from garth.http import Client
 
-    return Client(
+    auth = Client(
         domain="garmin.com",
         ssl_verify=True,
         telemetry_enabled=False,
-        timeout=20,
-        retries=0,
     )
+    # Client.__init__ supplies these defaults to configure() itself. Passing
+    # them through **kwargs duplicates the keywords in the pinned Garth 0.8.0.
+    auth.configure(timeout=20, retries=0)
+    return auth
 
 
 class GlobalClient:
@@ -298,25 +300,37 @@ class GlobalClient:
         self.auth.sess.close()
 
 
+class LoginError(RuntimeError):
+    """A deliberately credential-free diagnostic safe to display in the CLI."""
+
+
 def login(config, import_file=None):
     """Run interactively once; passwords/MFA codes are never persisted."""
     import getpass
 
-    auth = _new_auth()
+    auth = None
+    stage = "client initialization"
     try:
+        auth = _new_auth()
         if import_file:
+            stage = "session import"
             auth.loads(Path(import_file).read_text().strip())
         else:
+            stage = "account input"
             email = input("International Garmin email: ").strip()
+            stage = "password input"
             password = getpass.getpass("International Garmin password: ")
+            stage = "authentication"
             auth.login(
                 email,
                 password,
                 mfa_callback=lambda: getpass.getpass("Garmin verification code: "),
             )
             del password
+        stage = "account region validation"
         if auth.domain != "garmin.com":
             raise RuntimeError("A Garmin international session is required")
+        stage = "session storage"
         destination = config.state / "private/garmin-global-session.txt"
         atomic_write(destination, auth.dumps())
         print(
@@ -324,9 +338,24 @@ def login(config, import_file=None):
             + str(destination)
             + " (0600); no password saved."
         )
-    except Exception:
-        raise RuntimeError(
-            "International login failed; retry interactively or import a valid global session"
+    except EOFError:
+        raise LoginError(
+            "International login needs interactive input; use ssh -t and ops/global-login"
+        ) from None
+    except KeyboardInterrupt:
+        raise LoginError("International login cancelled") from None
+    except Exception as exc:
+        response = getattr(exc, "response", None)
+        if response is None:
+            response = getattr(getattr(exc, "error", None), "response", None)
+        status = getattr(response, "status_code", None)
+        detail = type(exc).__name__
+        if isinstance(status, int) and 100 <= status <= 599:
+            detail += f", HTTP {status}"
+        # Provider exception messages and bodies can contain passwords/tokens.
+        raise LoginError(
+            f"International login failed during {stage} ({detail})"
         ) from None
     finally:
-        auth.sess.close()
+        if auth is not None:
+            auth.sess.close()

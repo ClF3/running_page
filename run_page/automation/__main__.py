@@ -17,7 +17,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from .common import Busy, Config, job_lock, read_json, run, utcnow, write_json
 from .garmin import authentication_status
-from .global_client import auth_status as global_auth_status, login as global_login
+from .global_client import (
+    LoginError,
+    auth_status as global_auth_status,
+    login as global_login,
+)
 from .global_sync import (
     deliver as deliver_global,
     link_activity,
@@ -127,9 +131,12 @@ def main(argv=None):
         try:
             global_login(config, args.import_file)
             return 0
-        except Exception:
+        except LoginError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        except Exception as exc:
             print(
-                "International login failed; retry interactively or import a valid global session",
+                f"International login failed during setup ({type(exc).__name__})",
                 file=sys.stderr,
             )
             return 1

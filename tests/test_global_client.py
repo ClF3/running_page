@@ -6,12 +6,14 @@ from types import SimpleNamespace
 import tempfile
 import time
 import unittest
+import io
+from contextlib import redirect_stderr, redirect_stdout
 from unittest.mock import patch
 
 import httpx
 
 from run_page.automation.common import Config
-from run_page.automation.global_client import GlobalClient
+from run_page.automation.global_client import GlobalClient, _new_auth
 from tests.test_automation import GPX
 
 
@@ -41,6 +43,56 @@ class Auth:
 
     def loads(self, value):
         pass
+
+
+class GlobalLoginInitializationTest(unittest.TestCase):
+    def test_real_auth_factory_supports_the_pinned_garth_version(self):
+        auth = _new_auth()
+        self.addCleanup(auth.sess.close)
+        self.assertEqual(auth.domain, "garmin.com")
+        self.assertTrue(auth.sess.verify)
+        self.assertEqual(auth.timeout, 20)
+        self.assertEqual(auth.retries, 0)
+
+    def test_real_login_command_reaches_the_account_prompt_before_network_auth(self):
+        from run_page.automation.__main__ import main
+
+        with tempfile.TemporaryDirectory() as tmp:
+            config = Path(tmp) / "config.json"
+            config.write_text(json.dumps({"state": str(Path(tmp) / "state")}))
+            with (
+                patch("builtins.input", side_effect=EOFError) as account_input,
+                redirect_stdout(io.StringIO()),
+                redirect_stderr(io.StringIO()),
+            ):
+                self.assertEqual(main(["--config", str(config), "global-login"]), 1)
+            account_input.assert_called_once_with("International Garmin email: ")
+            self.assertFalse(
+                (Path(tmp) / "state/private/garmin-global-session.txt").exists()
+            )
+
+    def test_login_failure_reports_stage_without_echoing_provider_secrets(self):
+        from run_page.automation.__main__ import main
+
+        auth = Auth()
+        auth.login = lambda *args, **kwargs: (_ for _ in ()).throw(
+            RuntimeError("provider included private-password and private-token")
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            config = Path(tmp) / "config.json"
+            config.write_text(json.dumps({"state": str(Path(tmp) / "state")}))
+            stderr = io.StringIO()
+            with (
+                patch("run_page.automation.global_client._new_auth", return_value=auth),
+                patch("builtins.input", return_value="test@example.invalid"),
+                patch("getpass.getpass", return_value="private-password"),
+                redirect_stdout(io.StringIO()),
+                redirect_stderr(stderr),
+            ):
+                self.assertEqual(main(["--config", str(config), "global-login"]), 1)
+            self.assertIn("authentication (RuntimeError)", stderr.getvalue())
+            self.assertNotIn("private-password", stderr.getvalue())
+            self.assertNotIn("private-token", stderr.getvalue())
 
 
 class GlobalClientTest(unittest.IsolatedAsyncioTestCase):
