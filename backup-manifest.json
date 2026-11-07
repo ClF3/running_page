@@ -1,7 +1,7 @@
 {
-  "code_hash": "9df15582430ce9768a798c37e1849ee2513c43bd148f2dab5184a7eed35e9895",
-  "code_revision": "721701420eba232bcc0e83f4f3d91c1c33f29c3e",
-  "content_hash": "f64f11078aebd088b2a6f5cc467b06e296871c1dc4af7278ce381603484e5217",
+  "code_hash": "c04432f89bc25ccb5565b3727390195620ae17ed12b98f6f6d8ce3282a17ace0",
+  "code_revision": "f50fd38f0c640f2118cdb15f5177af7e3d41cb13",
+  "content_hash": "8ed7a2ddfbce6cf04e8080b8e80b9e81cb038241bcc5a87f21f5d3e3081c5eee",
   "files": {
     ".dockerignore": "bf6632373f7829dbf9c636dc8945e6247efb5c9eaf4f137262cdce8608f5e793",
     ".editorconfig": "504221df09c9d99ecb6c3d348be3fce6cfde37fd6c2ab909f80406da9184b4fa",
@@ -1234,7 +1234,7 @@
     "run_page/automation/common.py": "6e283850f6144b88fe312203ad5a1ec03c28eb4bce7c2fe37a5ab8df8a368b9b",
     "run_page/automation/garmin.py": "3d6215abd52925c3d91f86020eac4683940095d5b585341f0bfeaaf5939b3439",
     "run_page/automation/global_client.py": "68076dfb14271e2f5fbcf68918d23f2b1cd5b8852ffef8ab2b1e81690bfed9a3",
-    "run_page/automation/global_sync.py": "7f9334c7f04966e474108b8219f65002e4a4e5d99b84d301336160750468b222",
+    "run_page/automation/global_sync.py": "5832087cca4dc3becf69ba5f9208d764bf318ae3d72cd0a8feb644d3f407b65b",
     "run_page/automation/personal_api.py": "526473ed1419063f57707bd3fb6eaa41a08904bb90f9eb62aab3a69ba76db342",
     "run_page/automation/pipeline.py": "f6f30b1a250fb48128b23999085eca39064ed63c86f0ba2c7837aaeb731625fb",
     "run_page/codoon_sync.py": "327f209f8676cc30bcb641ab93a21fc0889198f4d98751bc69e885e59801ce32",
@@ -1416,7 +1416,7 @@
     "tests/test_generator_routes.py": "566043350f0b3cf7962d4516f3464174ad20c0228125531ee4c876f0b6456479",
     "tests/test_global_client.py": "5fac5808bb60099ba2b75a32127b1f4612defc46bc17ede7e133497ffbe78eb0",
     "tests/test_global_pipeline.py": "f7c8a02b81cbc90f8ed3e20f7ac920aee8c8a2c2c664e415918149847ab3ecc4",
-    "tests/test_global_sync.py": "a64bef139a74c6aea04f264f93c495c53252160905194d7cb786950db94b73b4",
+    "tests/test_global_sync.py": "b4a3862f7088419ac1677daa0d4d56801c7db62ef2a781ffa4898bb3a9ace47e",
     "tests/test_gpx_pipeline_integration.py": "d2a73ad176d257f621864f42caf6efdc9c18d893951f53459d335a69799aca4d",
     "tests/test_gpxtrackposter_utils.py": "fdc8a437e8e7804a50c3838540523194bb74edd2cd0c4fffd7fa98ac98c131fe",
     "tests/test_ops.py": "2434e1068d393c9a13d40790bdb8a3f2cad5c07935d6ba21755da9f70a1ddd7c",

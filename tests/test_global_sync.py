@@ -42,6 +42,8 @@ class FakeGlobal:
         self.fail_update = False
         self.ignore_update = False
         self.next_id = 1000
+        self.hide_next_uploaded_summary = False
+        self.hidden_id = None
 
     async def identity(self):
         return self.account
@@ -59,6 +61,9 @@ class FakeGlobal:
         ]
 
     async def summary(self, target_id):
+        if str(target_id) == self.hidden_id:
+            self.hidden_id = None
+            return None
         return deepcopy(self.rows.get(str(target_id)))
 
     async def upload(self, path):
@@ -69,6 +74,9 @@ class FakeGlobal:
         self.next_id += 1
         self.rows[target_id] = summary(target_id)
         self.files[target_id] = Path(path).read_bytes()
+        if self.hide_next_uploaded_summary:
+            self.hide_next_uploaded_summary = False
+            self.hidden_id = target_id
         if self.lose_upload_response:
             self.lose_upload_response = False
             raise RuntimeError("unknown upload outcome")
@@ -172,6 +180,15 @@ class GlobalSyncTest(unittest.TestCase):
         self.execute()
         self.assertEqual(len(self.remote.uploads), 1)
         self.remote.fail_update = False
+        self.execute()
+        self.assertEqual(len(self.remote.uploads), 1)
+        self.assertEqual(sync_status(self.cfg)["counts"], {"done": 1})
+
+    def test_accepted_upload_can_become_visible_later_without_being_lost(self):
+        self.queue()
+        self.remote.hide_next_uploaded_summary = True
+        self.execute()
+        self.assertEqual(sync_status(self.cfg)["counts"], {"updating": 1})
         self.execute()
         self.assertEqual(len(self.remote.uploads), 1)
         self.assertEqual(sync_status(self.cfg)["counts"], {"done": 1})

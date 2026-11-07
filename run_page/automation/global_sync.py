@@ -375,7 +375,9 @@ def _matches_fields(actual, expected):
 async def _patch(client, target_id, desired):
     current = await client.summary(target_id)
     if current is None:
-        raise Blocked("destination_activity_missing")
+        raise RuntimeError(
+            "International activity is not yet visible; retained for retry"
+        )
     if not _matches_fields(current, desired["fields"]):
         await client.update(target_id, desired["fields"])
         current = await client.summary(target_id)
