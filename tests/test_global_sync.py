@@ -3,6 +3,7 @@
 import asyncio
 from copy import deepcopy
 from datetime import timedelta
+from hashlib import sha256
 import json
 from pathlib import Path
 import sqlite3
@@ -166,6 +167,50 @@ class GlobalSyncTest(unittest.TestCase):
         self.assertEqual(sync_status(self.cfg)["counts"], {"done": 1})
         self.assertFalse(sync_status(self.cfg)["entries"][0]["owned"])
 
+    def test_same_start_with_changed_statistics_can_match_original_bytes(self):
+        existing = summary("2000")
+        existing["summaryDTO"]["distance"] *= 1.2
+        self.remote.rows["2000"] = existing
+        self.remote.files["2000"] = GPX
+        self.queue()
+
+        self.execute()
+
+        self.assertEqual(self.remote.uploads, [])
+        self.assertEqual(sync_status(self.cfg)["counts"], {"done": 1})
+        self.assertFalse(sync_status(self.cfg)["entries"][0]["owned"])
+
+    def test_unconfirmed_same_start_is_held_for_review_without_upload(self):
+        existing = summary("2000")
+        existing["summaryDTO"]["distance"] *= 1.2
+        self.remote.rows["2000"] = existing
+        self.remote.files["2000"] = GPX + b"\n"
+        self.queue()
+
+        self.execute()
+
+        self.assertEqual(self.remote.uploads, [])
+        self.assertEqual(self.remote.updates, [])
+        self.assertEqual(sync_status(self.cfg)["counts"], {"blocked": 1})
+
+    def test_prior_import_with_a_different_sport_type_requires_original_match(self):
+        existing = summary("2000")
+        existing["activityTypeDTO"] = {"typeKey": "other"}
+        self.remote.rows["2000"] = existing
+        self.remote.files["2000"] = GPX
+        self.queue()
+
+        self.assertEqual(
+            self.execute(dry_run=True)["plan"], {"needs_source_verification": 1}
+        )
+        self.execute()
+
+        self.assertEqual(self.remote.uploads, [])
+        self.assertEqual(sync_status(self.cfg)["counts"], {"done": 1})
+        self.assertEqual(
+            self.remote.rows["2000"]["activityTypeDTO"]["typeKey"], "running"
+        )
+
     def test_unknown_upload_is_reconciled_instead_of_blindly_reuploaded(self):
         self.queue()
         self.remote.lose_upload_response = True
@@ -173,6 +218,38 @@ class GlobalSyncTest(unittest.TestCase):
         self.execute()
         self.assertEqual(len(self.remote.uploads), 1)
         self.assertEqual(sync_status(self.cfg)["counts"], {"done": 1})
+
+    def test_accepted_upload_receipt_is_resumed_without_another_post(self):
+        class AsynchronousGlobal(FakeGlobal):
+            ready = False
+
+            async def upload(self, path):
+                self.result = await super().upload(path)
+                return {"receipt": "/upload-service/status/example"}
+
+            async def upload_status(self, receipt):
+                return self.result if self.ready else None
+
+        self.remote = AsynchronousGlobal()
+        self.queue()
+        with patch("run_page.automation.global_sync.asyncio.sleep"):
+            self.assertEqual(self.execute()["failed"], 0)
+        self.assertEqual(sync_status(self.cfg)["counts"], {"uploading": 1})
+
+        edited = summary("100")
+        edited["activityName"] = "Edited while import was processing"
+        self.queue(edited)
+        self.remote.ready = True
+        self.assertEqual(self.execute()["failed"], 0)
+        self.assertEqual(sync_status(self.cfg)["counts"], {"pending": 1})
+        self.assertEqual(self.execute()["failed"], 0)
+        status = sync_status(self.cfg)
+        self.assertEqual(status["counts"], {"done": 1})
+        self.assertTrue(status["entries"][0]["owned"])
+        self.assertEqual(len(self.remote.uploads), 1)
+        self.assertEqual(
+            self.remote.rows["1000"]["activityName"], edited["activityName"]
+        )
 
     def test_metadata_failure_retries_without_another_upload(self):
         self.queue()
@@ -200,6 +277,75 @@ class GlobalSyncTest(unittest.TestCase):
         self.remote.ignore_update = True
         self.execute()
         self.assertNotEqual(sync_status(self.cfg)["counts"], {"done": 1})
+
+    def test_source_trim_is_held_without_overwriting_untrimmed_statistics(self):
+        self.remote.rows["2000"] = summary("2000")
+        self.remote.files["2000"] = GPX
+        cropped = summary("100")
+        cropped["activityName"] = "Cropped run"
+        cropped["metadataDTO"] = {"trimmed": True}
+        cropped["summaryDTO"]["duration"] -= 30
+        self.queue(cropped)
+
+        self.execute()
+
+        self.assertEqual(self.remote.uploads, [])
+        self.assertEqual(self.remote.rows["2000"]["activityName"], "Cropped run")
+        self.assertEqual(
+            self.remote.rows["2000"]["summaryDTO"], summary("2000")["summaryDTO"]
+        )
+        self.assertEqual(sync_status(self.cfg)["counts"], {"blocked": 1})
+
+    def test_new_trimmed_source_is_not_uploaded_as_an_uncropped_file(self):
+        cropped = summary("100")
+        cropped["metadataDTO"] = {"trimmed": True}
+        self.queue(cropped)
+
+        self.execute()
+
+        self.assertEqual(self.remote.uploads, [])
+        self.assertEqual(sync_status(self.cfg)["counts"], {"blocked": 1})
+
+    def test_verified_clipped_import_accepts_metadata_but_holds_new_crop(self):
+        cropped = summary("100")
+        cropped["metadataDTO"] = {"trimmed": True}
+        cropped["summaryDTO"]["elapsedDuration"] = 300
+        self.queue(cropped)
+        self.remote.rows["2000"] = summary("2000")
+        self.remote.rows["2000"]["summaryDTO"]["elapsedDuration"] = 300
+        self.remote.files["2000"] = b"verified clipped file"
+        target_hash = sha256(self.remote.files["2000"]).hexdigest()
+        database = self.cfg.current / "run_page/data.db"
+        with sqlite3.connect(database) as db:
+            desired = db.execute("SELECT desired FROM automation_global_sync").fetchone()
+            confirmed = json.loads(desired[0])
+            confirmed["target_file_hash"] = target_hash
+            db.execute(
+                "UPDATE automation_global_sync "
+                "SET confirmed=?, target_id='2000', owned=1, phase='done'",
+                (json.dumps(confirmed),),
+            )
+
+        cropped["activityName"] = "Renamed run"
+        self.queue(cropped)
+        self.execute()
+        self.assertEqual(sync_status(self.cfg)["counts"], {"done": 1})
+        self.assertEqual(self.remote.rows["2000"]["activityName"], "Renamed run")
+        with sqlite3.connect(database) as db:
+            receipt = db.execute("SELECT confirmed FROM automation_global_sync").fetchone()
+        self.assertEqual(json.loads(receipt[0])["target_file_hash"], target_hash)
+
+        recropped = deepcopy(cropped)
+        recropped["summaryDTO"]["elapsedDuration"] = 290
+        untrimmed = summary("100")
+        for edited in (recropped, untrimmed):
+            edited["summaryDTO"]["distance"] = 1000
+            self.queue(edited)
+            self.execute()
+            self.assertEqual(sync_status(self.cfg)["counts"], {"blocked": 1})
+            self.assertEqual(self.remote.rows["2000"]["summaryDTO"]["distance"], 1100)
+        self.assertEqual(self.remote.uploads, [])
+        self.assertEqual(self.remote.deletes, [])
 
     def test_ambiguous_existing_activities_are_not_overwritten(self):
         self.remote.rows = {"2000": summary("2000"), "2001": summary("2001")}
@@ -322,6 +468,9 @@ class GlobalSyncTest(unittest.TestCase):
         )
         self.execute()
         self.assertEqual(self.remote.rows["1000"]["description"], "Source note changed")
+        synchronize(self.cfg, client=FakeGarmin())
+        self.execute()
+        self.assertEqual(self.remote.rows["1000"]["description"], "")
         self.assertEqual(len(self.remote.uploads), 1)
 
     def test_queue_receipts_survive_complete_backup_and_restore(self):

@@ -115,7 +115,9 @@ def main(argv=None):
     global_login_parser = sub.add_parser(
         "global-login", help="Interactive international login; no password stored"
     )
-    global_login_parser.add_argument("--import-file")
+    global_login_parser.add_argument(
+        "--import-file", help="Session file, or - for stdin"
+    )
     global_link = sub.add_parser(
         "global-link", help="Resolve an ambiguous destination activity explicitly"
     )

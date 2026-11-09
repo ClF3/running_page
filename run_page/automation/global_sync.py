@@ -73,13 +73,12 @@ def _fields(summary):
         raise RuntimeError("Incomplete international activity metadata")
     result = {
         "activityName": str(summary.get("activityName") or ""),
+        "description": summary.get("description") or "",
         "activityTypeDTO": {
             k: kind[k] for k in ("typeId", "typeKey", "parentTypeId") if k in kind
         },
         "summaryDTO": {k: dto[k] for k in EDITABLE_STATS if dto.get(k) is not None},
     }
-    if "description" in summary:
-        result["description"] = summary["description"] or ""
     # Reject non-finite statistics before persisting a version or making writes.
     json.dumps(result, allow_nan=False)
     return result
@@ -139,7 +138,7 @@ def _origin(path, fallback):
     }
 
 
-def _version(snapshot, fields, relative, original, verified=True):
+def _version(snapshot, fields, relative, original, verified=True, *, trimmed=False):
     path = _path(snapshot, relative)
     value = {
         "fields": fields,
@@ -147,6 +146,7 @@ def _version(snapshot, fields, relative, original, verified=True):
         "file_hash": digest_file(path),
         "original": bool(original),
         "metadata_verified": bool(verified),
+        "trimmed": trimmed,
         "origin": _origin(path, fields["summaryDTO"]),
     }
     value["fingerprint"] = digest_json(value)
@@ -161,7 +161,12 @@ def enqueue_activity(
         raise RuntimeError("Invalid Garmin source activity ID")
     database = Path(database)
     desired = _version(
-        database.parent.parent, _fields(summary), relative, original, verified
+        database.parent.parent,
+        _fields(summary),
+        relative,
+        original,
+        verified,
+        trimmed=(summary.get("metadataDTO") or {}).get("trimmed") is True,
     )
     with _connect(database) as db:
         old = db.execute(
@@ -321,6 +326,12 @@ def _same_time(left, right, *, local=False):
 
 
 def _matches(row, identity):
+    kind = row.get("activityType") or {}
+    if (
+        not isinstance(kind, dict)
+        or "run" not in str(kind.get("typeKey", "running")).lower()
+    ):
+        return False
     if not _same_time(row.get("startTimeGMT"), identity.get("startTimeGMT")):
         return False
     durations = [
@@ -343,22 +354,23 @@ def _matches(row, identity):
     return True
 
 
-def _matches_fields(actual, expected):
-    if not isinstance(actual, dict):
-        return False
+def _field_updates(actual, expected):
+    changes = {}
     for key in ("activityName", "description"):
         if key in expected and (actual.get(key) or "") != expected[key]:
-            return False
+            changes[key] = expected[key]
+    kind = expected.get("activityTypeDTO")
     if (
-        actual.get("activityTypeDTO", {}).get("typeKey")
-        != expected["activityTypeDTO"]["typeKey"]
+        kind is not None
+        and (actual.get("activityTypeDTO") or {}).get("typeKey") != kind["typeKey"]
     ):
-        return False
-    dto = actual.get("summaryDTO", {})
-    for key, value in expected["summaryDTO"].items():
+        changes["activityTypeDTO"] = kind
+    dto = actual.get("summaryDTO") or {}
+    stats = {}
+    for key, value in expected.get("summaryDTO", {}).items():
         if key.startswith("startTime"):
             if not _same_time(dto.get(key), value, local=key == "startTimeLocal"):
-                return False
+                stats[key] = value
         else:
             try:
                 tolerance = 0.02 if key == "averageSpeed" else 0.25
@@ -366,20 +378,68 @@ def _matches_fields(actual, expected):
                     not math.isfinite(float(dto.get(key)))
                     or abs(float(dto[key]) - float(value)) > tolerance
                 ):
-                    return False
+                    stats[key] = value
             except (TypeError, ValueError):
-                return False
-    return True
+                stats[key] = value
+    if stats:
+        changes["summaryDTO"] = stats
+    return changes
 
 
-async def _patch(client, target_id, desired):
+def _matches_fields(actual, expected):
+    return isinstance(actual, dict) and not _field_updates(actual, expected)
+
+
+async def _patch(client, target_id, desired, confirmed=None):
     current = await client.summary(target_id)
     if current is None:
         raise RuntimeError(
             "International activity is not yet visible; retained for retry"
         )
-    if not _matches_fields(current, desired["fields"]):
-        await client.update(target_id, desired["fields"])
+    updates = _field_updates(current, desired["fields"])
+    source_trimmed = desired.get("trimmed", False)
+    target_trimmed = (current.get("metadataDTO") or {}).get("trimmed") is True
+    boundary_changed = {"startTimeGMT", "elapsedDuration"}.intersection(
+        updates.get("summaryDTO", {})
+    )
+    needs_effective_file = source_trimmed != target_trimmed or (
+        source_trimmed and boundary_changed
+    )
+    target_file_hash = (confirmed or {}).get("target_file_hash")
+    if target_file_hash:
+        previous = confirmed["fields"]["summaryDTO"]
+        bounds = desired["fields"]["summaryDTO"]
+        unchanged_crop = (
+            source_trimmed
+            and not target_trimmed
+            and desired["file_hash"] == confirmed["file_hash"]
+            and bounds["startTimeGMT"] == previous["startTimeGMT"]
+            and previous.get("elapsedDuration") is not None
+            and bounds.get("elapsedDuration") == previous["elapsedDuration"]
+            and not boundary_changed
+        )
+        needs_effective_file = True
+        if unchanged_crop:
+            # Garmin imports a physically clipped FIT without setting trimmed.
+            original = await client.download(target_id)
+            needs_effective_file = (
+                hashlib.sha256(original.content).hexdigest() != target_file_hash
+            )
+    if needs_effective_file:
+        text = {
+            key: updates[key]
+            for key in ("activityName", "description")
+            if key in updates
+        }
+        if text:
+            await client.update(target_id, text)
+            if not _matches_fields(await client.summary(target_id), text):
+                raise RuntimeError(
+                    "International activity read-back verification failed"
+                )
+        raise Blocked("trimmed_activity_requires_effective_file")
+    if updates:
+        await client.update(target_id, updates)
         current = await client.summary(target_id)
     if not _matches_fields(current, desired["fields"]):
         raise RuntimeError("International activity read-back verification failed")
@@ -428,6 +488,10 @@ async def _retire(database, source_id, attempt, client, index):
             activityType=current["activityTypeDTO"],
         )
     )
+    _requeue_newer_version(database, source_id, desired)
+
+
+def _requeue_newer_version(database, source_id, desired):
     # Newer source versions may have arrived while recovering an interrupted job.
     with _connect(database) as db:
         latest = json.loads(
@@ -440,8 +504,87 @@ async def _retire(database, source_id, attempt, client, index):
         _write(database, source_id, phase="pending")
 
 
+async def _confirm_update(
+    database, source_id, target_id, owned, desired, client, index, confirmed=None
+):
+    current = await _patch(client, target_id, desired, confirmed)
+    target_file_hash = (confirmed or {}).get("target_file_hash")
+    if target_file_hash:
+        desired = {**desired, "target_file_hash": target_file_hash}
+    _confirm(database, source_id, desired, target_id, owned)
+    index[:] = [r for r in index if str(r["activityId"]) != target_id]
+    index.append(
+        dict(
+            current["summaryDTO"],
+            activityId=target_id,
+            activityType=current["activityTypeDTO"],
+        )
+    )
+
+
+async def _confirm_upload(database, source_id, attempt, client, index):
+    await _confirm_update(
+        database,
+        source_id,
+        attempt["new_id"],
+        attempt["new_owned"],
+        attempt["version"],
+        client,
+        index,
+    )
+    _requeue_newer_version(database, source_id, attempt["version"])
+
+
+async def _finish_upload(database, source_id, attempt, result, client, index):
+    if not result.get("id"):
+        raise RuntimeError("Upload needs reconciliation before another attempt")
+    new_id = str(result["id"])
+    preexisting = (
+        attempt.get("receipt_preexisting", False)
+        if "receipt" in attempt
+        else any(str(r["activityId"]) == new_id for r in index)
+    )
+    new_owned = bool(result.get("created")) and not preexisting
+    attempt.update(new_id=new_id, new_owned=new_owned)
+    old_id, old_hash = attempt["old_id"], attempt["old_file_hash"]
+    if old_id and old_hash and old_hash != attempt["version"]["file_hash"]:
+        if new_id == old_id or not new_owned:
+            raise Blocked("server_refused_non_destructive_replacement")
+        _write(
+            database,
+            source_id,
+            phase="retiring",
+            attempt=json.dumps(attempt, sort_keys=True),
+        )
+        await _retire(database, source_id, attempt, client, index)
+        return
+    _write(
+        database,
+        source_id,
+        target_id=new_id,
+        owned=int(new_owned),
+        phase="updating",
+        attempt=json.dumps(attempt, sort_keys=True),
+    )
+    await _confirm_upload(database, source_id, attempt, client, index)
+
+
+async def _poll_upload(database, source_id, attempt, client, index):
+    for delay in (0, 1, 2, 4):
+        if delay:
+            await asyncio.sleep(delay)
+        result = await client.upload_status(attempt["receipt"])
+        if result is not None:
+            await _finish_upload(database, source_id, attempt, result, client, index)
+            return
+
+
 async def _ensure_original(config, row, desired, source_client):
-    if desired["original"] and desired.get("metadata_verified", True):
+    if (
+        desired["original"]
+        and desired.get("metadata_verified", True)
+        and "trimmed" in desired
+    ):
         return desired
     if source_client is None:
         raise RuntimeError(
@@ -449,13 +592,17 @@ async def _ensure_original(config, row, desired, source_client):
         )
     source_id = row["source_id"]
     fields = desired["fields"]
+    trimmed = desired.get("trimmed", False)
     if hasattr(source_client, "summary"):
         summary = await source_client.summary(source_id)
         if str(summary.get("activityId")) != source_id:
             raise RuntimeError("Original activity summary identity mismatch")
         fields = _fields(summary)
+        trimmed = (summary.get("metadataDTO") or {}).get("trimmed") is True
     if desired["original"]:
-        desired = _version(config.current, fields, desired["file"], True)
+        desired = _version(
+            config.current, fields, desired["file"], True, trimmed=trimmed
+        )
         _write(
             config.current / "run_page/data.db",
             source_id,
@@ -471,7 +618,7 @@ async def _ensure_original(config, row, desired, source_client):
     ]
     relative = f"{folder}/{source_id}.{original.format}"
     atomic_write(config.current / relative, original.content)
-    desired = _version(config.current, fields, relative, True)
+    desired = _version(config.current, fields, relative, True, trimmed=trimmed)
     _write(
         config.current / "run_page/data.db",
         source_id,
@@ -488,6 +635,12 @@ async def _process(config, database, row, client, index, source_client):
     if row["phase"] == "retiring":
         await _retire(database, source_id, attempt, client, index)
         return
+    if row["phase"] == "updating" and attempt.get("new_id"):
+        await _confirm_upload(database, source_id, attempt, client, index)
+        return
+    if row["phase"] == "uploading" and attempt.get("receipt"):
+        await _poll_upload(database, source_id, attempt, client, index)
+        return
     desired = await _ensure_original(config, row, desired, source_client)
     target_id, owned = row["target_id"], bool(row["owned"])
     replacement = bool(
@@ -495,7 +648,7 @@ async def _process(config, database, row, client, index, source_client):
     )
     if replacement:
         # Metadata changes can still be applied to the retained activity.
-        await _patch(client, target_id, desired)
+        await _patch(client, target_id, desired, confirmed)
         if not owned:
             raise Blocked("original_changed_on_adopted_activity")
     if not target_id or replacement or row["phase"] == "uploading":
@@ -514,6 +667,25 @@ async def _process(config, database, row, client, index, source_client):
             and (not replacement or str(r["activityId"]) != str(target_id))
         ]
         unique = {str(r["activityId"]) for r in candidates}
+        if not unique and not target_id:
+            same_start = {
+                str(item["activityId"])
+                for item in index
+                if any(
+                    _same_time(item.get("startTimeGMT"), identity.get("startTimeGMT"))
+                    for identity in identities
+                )
+            }
+            known_hashes = {
+                desired["file_hash"],
+                attempt.get("version", desired)["file_hash"],
+            }
+            for candidate in sorted(same_start):
+                original = await client.download(candidate)
+                if hashlib.sha256(original.content).hexdigest() in known_hashes:
+                    unique.add(candidate)
+            if same_start and not unique:
+                raise Blocked("unverified_same_start_destination")
         if len(unique) > 1:
             raise Blocked("ambiguous_destination_match")
         if unique:
@@ -560,6 +732,8 @@ async def _process(config, database, row, client, index, source_client):
                 ).total_seconds() < 300:
                     return  # Allow an accepted upload to appear before retrying a POST.
             desired = await _ensure_original(config, row, desired, source_client)
+            if desired.get("trimmed"):
+                raise Blocked("trimmed_activity_requires_effective_file")
             path = _path(config.current, desired["file"])
             if digest_file(path) != desired["file_hash"]:
                 raise RuntimeError("Queued original activity changed before upload")
@@ -577,38 +751,24 @@ async def _process(config, database, row, client, index, source_client):
                 attempt=json.dumps(attempt, sort_keys=True),
             )
             result = await client.upload(path)
-            new_id = str(result["id"]) if result.get("id") else None
-            if new_id is None:
-                raise RuntimeError("Upload needs reconciliation before another attempt")
-            new_owned = bool(result.get("created")) and new_id not in {
-                str(r["activityId"]) for r in index
-            }
-            if replacement:
-                if new_id == target_id or not result.get("created"):
-                    raise Blocked("server_refused_non_destructive_replacement")
-                attempt.update(new_id=new_id, new_owned=new_owned)
+            if result.get("receipt"):
+                attempt["receipt"] = result["receipt"]
+                attempt["receipt_preexisting"] = any(
+                    str(item["activityId"]) == result.get("id") for item in index
+                )
                 _write(
                     database,
                     source_id,
-                    phase="retiring",
                     attempt=json.dumps(attempt, sort_keys=True),
                 )
-                await _retire(database, source_id, attempt, client, index)
-                return
-            target_id, owned = new_id, new_owned
-            _write(
-                database,
-                source_id,
-                target_id=target_id,
-                owned=int(owned),
-                phase="updating",
-            )
-    current = await _patch(client, target_id, desired)
-    _confirm(database, source_id, desired, target_id, owned)
-    dto = current["summaryDTO"]
-    index[:] = [r for r in index if str(r["activityId"]) != target_id]
-    index.append(
-        dict(dto, activityId=target_id, activityType=current["activityTypeDTO"])
+                await _poll_upload(database, source_id, attempt, client, index)
+            else:
+                await _finish_upload(
+                    database, source_id, attempt, result, client, index
+                )
+            return
+    await _confirm_update(
+        database, source_id, target_id, owned, desired, client, index, confirmed
     )
 
 

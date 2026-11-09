@@ -210,7 +210,7 @@ class Config:
         self.state = Path(
             values.get("state", os.getenv("RUNNING_PAGE_STATE", "/data"))
         ).absolute()
-        self.site_url = values.get("site_url", "https://run-dev.clf3.org").rstrip("/")
+        self.site_url = values.get("site_url", "https://run.clf3.org").rstrip("/")
         self.worker = values.get("worker", "running-page")
         self.repository = values.get(
             "repository", "git@github.com:ClF3/running_page.git"

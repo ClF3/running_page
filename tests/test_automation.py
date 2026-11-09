@@ -124,7 +124,11 @@ class AutomationTest(unittest.TestCase):
         (self.source / "app.py").write_text("print('version 1')\n")
         self.seed = self.root / "seed"
         seed(self.seed)
-        self.cfg = Config(source=self.source, state=self.root / "state")
+        self.cfg = Config(
+            self.root / "absent-config.json",
+            source=self.source,
+            state=self.root / "state",
+        )
         bootstrap(self.cfg, self.seed)
 
     def test_atomic_write_preserves_old_file_on_interruption(self):
@@ -254,7 +258,7 @@ class AutomationTest(unittest.TestCase):
         self.make_candidate()
         domain = {
             "success": True,
-            "result": [{"hostname": "run-dev.clf3.org", "service": "running-page"}],
+            "result": [{"hostname": "run.clf3.org", "service": "running-page"}],
         }
         with (
             patch.dict(
@@ -277,6 +281,7 @@ class AutomationTest(unittest.TestCase):
         self.assertFalse((self.cfg.state / "deployed.json").exists())
 
     def test_unknown_upload_outcome_is_reconciled_without_uploading_twice(self):
+        self.cfg.site_url = "https://run-dev.clf3.org"
         item = self.make_candidate()
         domain = {
             "success": True,
@@ -307,6 +312,10 @@ class AutomationTest(unittest.TestCase):
         item = self.make_candidate()
 
         def respond(request, **kwargs):
+            self.assertEqual(
+                request.full_url,
+                "https://run.clf3.org/release.json?version=" + item["input_hash"],
+            )
             if request.get_header("User-agent") != "running-page-deployer/1.0":
                 raise urllib.error.HTTPError(
                     request.full_url, 403, "error 1010", {}, None
@@ -320,7 +329,10 @@ class AutomationTest(unittest.TestCase):
         item = self.make_candidate()
         domain = {
             "success": True,
-            "result": [{"hostname": "run-dev.clf3.org", "service": "running-page"}],
+            "result": [
+                {"hostname": "run.clf3.org", "service": "running-page"},
+                {"hostname": "run-dev.clf3.org", "service": "running-page"},
+            ],
         }
         with (
             patch.dict(
@@ -340,6 +352,11 @@ class AutomationTest(unittest.TestCase):
         ):
             publish(self.cfg)
         upload.assert_called_once()
+        wrangler = read_json(
+            self.cfg.state / "releases" / item["input_hash"] / "wrangler.json"
+        )
+        self.assertEqual(wrangler["name"], "running-page")
+        self.assertNotIn("routes", wrangler)
         self.assertEqual([call.args[0] for call in sleep.call_args_list], [2, 4])
         self.assertEqual(
             read_json(self.cfg.state / "deployed.json")["input_hash"],
@@ -350,7 +367,7 @@ class AutomationTest(unittest.TestCase):
         self.make_candidate()
         domain = {
             "success": True,
-            "result": [{"hostname": "run-dev.clf3.org", "service": "running-page"}],
+            "result": [{"hostname": "run.clf3.org", "service": "running-page"}],
         }
         with (
             patch.dict(
@@ -539,7 +556,7 @@ class AutomationTest(unittest.TestCase):
         )
         self.assertNotEqual(current["input_hash"], old["input_hash"])
 
-    def test_refuses_corrupt_build_or_production_target_before_network(self):
+    def test_refuses_corrupt_build_or_unknown_hostname_before_network(self):
         item = self.make_candidate()
         file = self.cfg.state / "releases" / item["input_hash"] / "dist/index.html"
         file.write_text("corrupt unrecorded asset")
@@ -548,8 +565,8 @@ class AutomationTest(unittest.TestCase):
                 publish(self.cfg)
         network.assert_not_called()
         file.unlink()
-        self.cfg.site_url = "https://run.clf3.org"
-        with self.assertRaisesRegex(RuntimeError, "production cutover"):
+        self.cfg.site_url = "https://other.example"
+        with self.assertRaisesRegex(RuntimeError, "Unsupported running-page deployment"):
             publish(self.cfg, dry_run=True)
 
     def test_corrupt_archive_is_rejected_by_restore(self):

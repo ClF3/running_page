@@ -11,7 +11,11 @@ if [ "${1:-}" = --enable ]; then
   running_page_enable_global=1
   shift
 fi
-docker compose -f "$project_root/ops/compose.yaml" run --rm --no-deps \
+running_page_login_tty=
+case "${1:-}" in
+  --import-file|--import-file=*) running_page_login_tty=-T ;;
+esac
+docker compose -f "$project_root/ops/compose.yaml" run --rm --no-deps $running_page_login_tty \
   --interactive=true runner global-login "$@"
 if [ "$running_page_enable_global" -eq 1 ]; then
   running_page_preflight=$(mktemp "$RUNNING_PAGE_HOST_STATE/.global-preflight.XXXXXXXX")
@@ -42,5 +46,5 @@ print('International activity sync enabled; existing history is queued for recon
 PY
   "$project_root/ops/run" global-sync --backfill
 else
-  echo 'Session saved. To verify and enable hourly delivery: ops/global-login --enable'
+  echo 'Next step: ops/run global-sync --backfill --dry-run'
 fi

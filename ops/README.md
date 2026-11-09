@@ -1,6 +1,6 @@
 # VPS 同步、发布与备份
 
-本目录替代 GitHub Actions。目标 Linux 服务器使用 Docker Compose 执行一次性任务，由 systemd 每小时同步、每天北京时间 03:00 备份。网站上传到现有 Cloudflare Worker `running-page` 的 `run-dev.clf3.org`，生产域名切换另行处理。
+本目录替代 GitHub Actions。目标 Linux 服务器使用 Docker Compose 执行一次性任务，由 systemd 每小时同步、每天北京时间 03:00 备份。网站上传到 Cloudflare Worker `running-page`，通过 `run.clf3.org` 核验发布版本。自定义域名绑定由 Cloudflare 管理。
 
 ## 已确定的行为
 
@@ -70,7 +70,7 @@ sudo /opt/running-page/current/ops/run status
 violet 的配置文件是 `/data/tianyi/running-page/config/credentials.env`，权限保持 0600。系统级部署使用 `/etc/running-page/credentials.env`。填写个人 API Key 和 Cloudflare 变量，GitHub 密钥单独保存。程序不会打印凭据值。
 
 - `GARMIN_PERSONAL_API_KEY`：佳明 Connect 网页设置中创建的 **Personal API Key**。填写 Key 本身，程序自动换取访问令牌。不要将它填入旧的 `GARMIN_SECRET_STRING_CN` 字段。
-- `CLOUDFLARE_ACCOUNT_ID` 和 `CLOUDFLARE_API_TOKEN`：允许对目标账户的 Worker 部署及读取 Worker 自定义域名。程序先核对 `run-dev.clf3.org` 已属于配置的 Worker，避免误部署到其他服务。
+- `CLOUDFLARE_ACCOUNT_ID` 和 `CLOUDFLARE_API_TOKEN` 用于部署 Worker 和读取自定义域名。程序先核对 `site_url` 的域名已绑定到配置的 Worker，再发布静态文件。
 - GitHub：为备份仓库配置专用写入密钥及核实后的 `known_hosts`，放在上述 `/etc/running-page` 路径；非交互任务不接受未知 SSH 主机公钥。公开仓库的备份包含已有的运动轨迹，与当前仓库相同。
 
 在 `config.json` 中设置 `"garmin_region": "cn"`（默认）或 `"global"`。个人 API 分别使用 `https://personal.connectapi.garmin.cn` 和 `https://personal.connectapi.garmin.com`，始终验证 TLS。中国区已做未授权端点连通性检查，仍需有效 Key 验证实际账户的数据访问。
@@ -149,7 +149,7 @@ pnpm test:frontend
 
 ## 国区活动同步到国际区
 
-国区仍用 Personal API Key 下载。国际区上传使用独立 OAuth 会话，通过一次交互登录和验证码认证获得，后台自动续期访问令牌；不保存账号密码。会话失效或被撤销后需要重新登录。官方 [Personal API 接口文档](https://developer.garmin.com/gc-developer-program/personal/swagger-docs/)目前只列出读取端点，国际区上传使用 Connect 会话接口。
+国区仍用 Personal API Key 下载。国际区上传使用 Garmin Connect 的 DI OAuth 会话。首次交互登录输入国际区账号、密码及佳明要求的验证码。后台用刷新令牌续期，密码只用于这次登录。会话失效或被撤销后需要重新登录。官方 Personal API 目前只列出读取端点。 [Personal API 接口文档](https://developer.garmin.com/gc-developer-program/personal/swagger-docs/)
 
 在 violet 上首次登录并启用：
 
@@ -157,7 +157,22 @@ pnpm test:frontend
 ssh -t violet /data/tianyi/running-page/current/ops/global-login --enable
 ```
 
-提示中输入**国际区**账号、密码和验证码。命令先保存权限为 0600 的会话，再进行只读对账，成功后将 `config/config.json` 的 `global_sync` 设为 `true`，并开始首批同步。后续复用既有每小时任务。若已导出国际区的 Garth 会话，可将文件安全保存为 `config/garmin-global-session.txt`，执行：
+命令先保存权限为 0600 的会话，再进行只读对账。对账成功后将 `config/config.json` 的 `global_sync` 设为 `true`，并开始首批同步。后续复用既有每小时任务。
+
+如果服务器上的登录受限，可在本机仓库安装 `requirements.txt` 中的依赖，再从本机登录并通过 SSH 导入会话。
+
+```sh
+(
+  session_dir=$(mktemp -d)
+  trap 'rm -rf "$session_dir"' EXIT
+  RUNNING_PAGE_STATE="$session_dir" PYTHONPATH=.:run_page \
+    .venv/bin/python -m run_page.automation --config "$session_dir/config.json" global-login &&
+  ssh -T violet /data/tianyi/running-page/current/ops/global-login --enable --import-file - \
+    < "$session_dir/private/garmin-global-session.txt"
+)
+```
+
+已有的国际区 Garth 会话可通过文件导入，前提是其令牌仍然有效。例如将文件保存到服务器的 `config/garmin-global-session.txt`，再从服务器运行下列命令。
 
 ```sh
 /data/tianyi/running-page/current/ops/global-login --enable --import-file /config/garmin-global-session.txt
@@ -167,11 +182,11 @@ ssh -t violet /data/tianyi/running-page/current/ops/global-login --enable
 
 ### 同步行为
 
-- 首次对全部本地活动建立待同步清单，分页读取国际区全部跑步活动。以 UTC 开始时间、时长、距离识别已有活动，名称不参与识别。唯一匹配时记录国区 ID → 国际区 ID；多条匹配时标为 `blocked`，等待人工指定，不任意覆盖。
+- 首次对全部本地跑步建立待同步清单，并分页读取国际区所有活动。跑步活动以 UTC 开始时间、时长、距离匹配，名称不参与识别。开始时间相同但国际区活动属于其他运动类型，或统计值不一致时，比对原始文件。唯一匹配时记录国区 ID → 国际区 ID。匹配有歧义或无法确认时标为 `blocked`，等待人工核对。
 - 本地已有 GPX/FIT 不代表上传成功。缺少原始文件时重新读取国区摘要和原始 FIT/TCX/GPX，保留传感器与室内跑数据；下载成功才处理上传。
 - 每小时扫描新增及最近 30 天活动时，对原始文件及同步字段计算指纹。名称、说明、类型、开始时间、距离、用时、心率、爬升等发生变化时入队，与网页是否需要重新构建无关。历史修改仍可通过 `refresh --all` 检查。
 - 队列、目标账号绑定、目标活动 ID、确认过的版本和未完成操作均存入 `run_page/data.db`，随完整备份恢复。上传、修改或删除前先提交操作状态；网络中断后先对账，再继续，上传 POST 不在网络层盲目重试。
-- 上传后同步可编辑字段并读回核对，不复制国际区的账号、隐私、装备、收藏或社交数据。成功才记为 `done`；读取到 HTTP 200 本身不代表活动导入成功，会核对 `detailedImportResult`。
+- 佳明异步导入时会返回 HTTP 202。程序保存处理回执，等佳明确认活动 ID 后再同步可编辑字段和读回核对。同步结果核验通过才记为 `done`，账号、隐私、装备、收藏和社交数据不参与复制。
 - 原始文件变化时，仅允许替换本工具明确创建的活动。先上传新版本、读回摘要、下载核对原始文件，再校验旧活动的归属与原始文件，最后删除旧版本并确认已删除。已有活动的认领不授予删除权限。
 - 如果服务器将新版本判为旧活动的重复导入，或新旧原始文件核验失败，保留旧活动并记为 `blocked`。不会通过先删除旧活动来绕过服务器判重，也不会将未完成的轨迹替换标为成功。
 - 每轮默认最多处理 25 条，优先近期记录，单轮国际区处理预算 10 分钟。尚未处理或失败的条目保留到后续轮次。可用 `global_sync_limit` 调整批量。国际区失败单独记入 `jobs.global-sync`，不阻止完整网页版本发布；源站或发布失败时，也会尝试补传上次已完整下载的队列。

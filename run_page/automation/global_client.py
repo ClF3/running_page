@@ -15,14 +15,22 @@ import logging
 import os
 from pathlib import Path
 import re
+import sys
 import time
+from urllib.parse import urlsplit
 
 import httpx
 
 from .activity_files import MAX_ACTIVITY_BYTES, unpack_activity
-from .common import atomic_write, read_json, write_json
+from .common import atomic_write, job_lock, read_json, write_json
 
 BASE_URL = "https://connectapi.garmin.com"
+SESSION_PATH = "private/garmin-global-session.txt"
+ACTIVITY_RECEIPT_PATH = r"/activity-service/activity/[0-9]{1,20}"
+UPLOAD_RECEIPT_PATH = (
+    rf"(?:/activity-service/activity/status/[0-9]{{1,20}}/[a-fA-F0-9-]{{32,36}}"
+    rf"|/upload-service/[A-Za-z0-9_./-]+|{ACTIVITY_RECEIPT_PATH})"
+)
 
 
 def activity_id(value):
@@ -31,56 +39,158 @@ def activity_id(value):
     return str(value)
 
 
-def auth_status(config):
-    cached = config.state / "private/garmin-global-session.txt"
-    seed = Path(
+def _upload_location(value, pattern):
+    location = urlsplit(value or "")
+    if (
+        (location.scheme, location.netloc)
+        not in {("", ""), ("https", "connectapi.garmin.com")}
+        or location.query
+        or location.fragment
+        or not re.fullmatch(pattern, location.path)
+        or any(part in {".", ".."} for part in location.path.split("/"))
+    ):
+        raise RuntimeError("Invalid international upload location")
+    return location.path
+
+
+def _seed_path():
+    return Path(
         os.getenv("GARMIN_GLOBAL_SESSION_FILE", "/config/garmin-global-session.txt")
     )
+
+
+def _session_seed():
+    seed = os.getenv("GARMIN_GLOBAL_SECRET_STRING", "").strip()
+    path = _seed_path()
+    if not seed and path.is_file():
+        seed = path.read_text().strip()
+    return seed, hashlib.sha256(seed.encode()).hexdigest() if seed else None
+
+
+def auth_status(config):
     return {
         "method": "oauth_session",
         "configured": bool(
-            cached.is_file()
-            or seed.is_file()
+            (config.state / SESSION_PATH).is_file()
+            or _seed_path().is_file()
             or os.getenv("GARMIN_GLOBAL_SECRET_STRING", "").strip()
         ),
     }
 
 
-def _new_auth():
-    os.environ["GARTH_TELEMETRY_ENABLED"] = "false"
-    from garth.http import Client
+class _ConnectAuth:
+    domain = "garmin.com"
 
-    auth = Client(
-        domain="garmin.com",
-        ssl_verify=True,
-        telemetry_enabled=False,
-    )
-    # Client.__init__ supplies these defaults to configure() itself. Passing
-    # them through **kwargs duplicates the keywords in the pinned Garth 0.8.0.
-    auth.configure(timeout=20, retries=0)
+    def __init__(self):
+        from garminconnect.client import Client
+
+        # Report only sanitized stages and status codes at our CLI boundary.
+        logging.getLogger("garminconnect").setLevel(logging.CRITICAL + 1)
+        self.client = Client(domain=self.domain)
+
+    def _require_renewable(self):
+        tokens = (
+            self.client.di_token,
+            self.client.di_refresh_token,
+            self.client.di_client_id,
+        )
+        if not all(isinstance(token, str) and token for token in tokens):
+            raise LoginError(
+                "Garmin did not provide a renewable international OAuth session"
+            )
+
+    def login(self, email, password, prompt_mfa):
+        self.client.login(email, password, prompt_mfa=prompt_mfa)
+        self._require_renewable()
+
+    def loads(self, secret):
+        if json.loads(secret).get("domain") != self.domain:
+            raise ValueError("Wrong account region")
+        self.client.loads(secret)
+        self._require_renewable()
+
+    def dumps(self):
+        tokens = json.loads(self.client.dumps())
+        return json.dumps({**tokens, "domain": self.domain})
+
+    def expires_soon(self):
+        return self.client._token_expires_soon()
+
+    def refresh(self):
+        self.client._refresh_di_token()
+        self._require_renewable()
+
+    def headers(self):
+        return self.client.get_api_headers()
+
+    def close(self):
+        self.client.cs.close()
+        self.client._api_session.close()
+
+
+class _LegacyGarthAuth:
+    """Read and renew an already-issued Garth session."""
+
+    def __init__(self, secret):
+        os.environ["GARTH_TELEMETRY_ENABLED"] = "false"
+        from garth.http import Client
+
+        self.client = Client(
+            domain="garmin.com", ssl_verify=True, telemetry_enabled=False
+        )
+        self.client.configure(timeout=20, retries=0)
+        try:
+            self.client.loads(secret)
+            if self.client.domain != "garmin.com":
+                raise ValueError("Wrong account region")
+        except Exception:
+            self.close()
+            raise
+
+    def dumps(self):
+        return self.client.dumps()
+
+    def expires_soon(self):
+        return self.client.oauth2_token.expires_at <= time.time() + 60
+
+    def refresh(self):
+        self.client.refresh_oauth2()
+
+    def headers(self):
+        return {
+            "Authorization": str(self.client.oauth2_token),
+            "User-Agent": "Mozilla/5.0",
+        }
+
+    def close(self):
+        self.client.sess.close()
+
+
+def _load_auth(secret):
+    if not secret.startswith("{"):
+        return _LegacyGarthAuth(secret)
+    auth = _ConnectAuth()
+    try:
+        auth.loads(secret)
+    except Exception:
+        auth.close()
+        raise
     return auth
 
 
 class GlobalClient:
     def __init__(self, config, *, http=None, auth=None):
         self.config = config
-        self.session_path = config.state / "private/garmin-global-session.txt"
-        self.seed_path = Path(
-            os.getenv("GARMIN_GLOBAL_SESSION_FILE", "/config/garmin-global-session.txt")
-        )
-        self.auth = auth or _new_auth()
+        self.session_path = config.state / SESSION_PATH
+        self.auth = auth
         self.http = http or httpx.AsyncClient(timeout=httpx.Timeout(90, connect=20))
-        self._loaded = auth is not None
         self._account = None
         self._types = None
 
     async def _load(self):
-        if self._loaded:
+        if self.auth is not None:
             return
-        seed = os.getenv("GARMIN_GLOBAL_SECRET_STRING", "").strip()
-        if not seed and self.seed_path.is_file():
-            seed = self.seed_path.read_text().strip()
-        seed_hash = hashlib.sha256(seed.encode()).hexdigest() if seed else None
+        seed, seed_hash = _session_seed()
         marker = read_json(self.session_path.with_suffix(".origin.json"), {})
         if self.session_path.is_file() and (
             not seed or marker.get("seed_hash") == seed_hash
@@ -91,14 +201,11 @@ class GlobalClient:
         if not secret:
             raise RuntimeError("International session is missing; run ops/global-login")
         try:
-            self.auth.loads(secret)
-            if self.auth.domain != "garmin.com":
-                raise ValueError("Wrong account region")
+            self.auth = _load_auth(secret)
         except Exception:
             raise RuntimeError(
                 "Invalid international OAuth session; run ops/global-login"
             ) from None
-        self._loaded = True
         self._persist()
         write_json(
             self.session_path.with_suffix(".origin.json"), {"seed_hash": seed_hash}
@@ -107,25 +214,31 @@ class GlobalClient:
     def _persist(self):
         atomic_write(self.session_path, self.auth.dumps())
 
-    async def _token(self, force=False):
+    def _renew(self):
+        self.auth.refresh()
+        self._persist()
+
+    async def _headers(self, force=False):
         await self._load()
-        token = self.auth.oauth2_token
-        if force or token.expired or float(token.expires_at) <= time.time() + 60:
+        if force or self.auth.expires_soon():
             try:
-                await asyncio.to_thread(self.auth.refresh_oauth2)
-                self._persist()
+                await asyncio.to_thread(self._renew)
             except Exception:
                 raise RuntimeError(
                     "International session renewal failed; run ops/global-login"
                 ) from None
-        return str(self.auth.oauth2_token)
+        return {"Origin": "https://connect.garmin.com", **self.auth.headers()}
 
-    async def _request(self, method, path, *, payload=None, files=None, allow=()):
+    async def _request(
+        self, method, path, *, payload=None, files=None, allow=(), accept=None
+    ):
         # A POST timeout/5xx may have happened after acceptance. Never replay it
         # here: the durable delivery module reconciles before another upload.
         attempts = 3 if method in {"GET", "PUT", "DELETE"} else 2
         for attempt in range(attempts):
-            token = await self._token()
+            headers = await self._headers()
+            if accept:
+                headers["Accept"] = accept
             if files:
                 for _, stream, _ in files.values():
                     stream.seek(0)
@@ -134,11 +247,7 @@ class GlobalClient:
                     async with self.http.stream(
                         method,
                         BASE_URL + path,
-                        headers={
-                            "Authorization": token,
-                            "User-Agent": "Mozilla/5.0",
-                            "origin": "https://connect.garmin.com",
-                        },
+                        headers=headers,
                         json=payload,
                         files=files,
                     ) as response:
@@ -151,7 +260,7 @@ class GlobalClient:
                                 )
                             content.extend(chunk)
                 if status == 401 and attempt == 0:
-                    await self._token(force=True)
+                    await self._headers(force=True)
                     continue  # An explicit 401 did not accept a write.
                 if (
                     method != "POST"
@@ -165,7 +274,7 @@ class GlobalClient:
                     continue
                 if status not in (*allow, 200, 201, 202, 204):
                     raise RuntimeError(f"International request failed (HTTP {status})")
-                return status, bytes(content)
+                return status, bytes(content), response.headers.get("Location")
             except (httpx.TransportError, TimeoutError):
                 if method == "POST" or attempt == attempts - 1:
                     raise RuntimeError(
@@ -175,7 +284,7 @@ class GlobalClient:
         raise RuntimeError("International authentication failed")
 
     async def _json(self, path, **kwargs):
-        status, body = await self._request("GET", path, **kwargs)
+        status, body, _ = await self._request("GET", path, **kwargs)
         if status == 404:
             return None
         try:
@@ -185,7 +294,7 @@ class GlobalClient:
 
     async def identity(self):
         if self._account is None:
-            profile = await self._json("/userprofile-service/userprofile/userprofile")
+            profile = await self._json("/userprofile-service/socialProfile")
             value = (
                 profile.get("profileId")
                 or profile.get("id")
@@ -205,7 +314,7 @@ class GlobalClient:
         start = 0
         for _ in range(1000):
             page = await self._json(
-                f"/activitylist-service/activities/search/activities?start={start}&limit=100&activityType=running"
+                f"/activitylist-service/activities/search/activities?start={start}&limit=100"
             )
             if not isinstance(page, list):
                 raise RuntimeError("Invalid international activities response")
@@ -231,12 +340,40 @@ class GlobalClient:
     async def upload(self, path):
         path = Path(path)
         with path.open("rb") as stream:
-            status, body = await self._request(
+            status, body, location = await self._request(
                 "POST",
                 "/upload-service/upload",
                 files={"file": (path.name, stream, "application/octet-stream")},
                 allow=(409,),
             )
+        if status == 202 and location:
+            receipt = _upload_location(location, UPLOAD_RECEIPT_PATH)
+            result = {"receipt": receipt}
+            if re.fullmatch(ACTIVITY_RECEIPT_PATH, receipt):
+                result["id"] = activity_id(receipt.rsplit("/", 1)[1])
+            return result
+        return self._upload_result(status, body, location)
+
+    async def upload_status(self, receipt):
+        path = _upload_location(receipt, UPLOAD_RECEIPT_PATH)
+        if re.fullmatch(ACTIVITY_RECEIPT_PATH, path):
+            target_id = activity_id(path.rsplit("/", 1)[1])
+            status, body, _ = await self._request("GET", path, allow=(404,))
+            if status in (202, 404):
+                return None
+            if status != 200 or str(json.loads(body).get("activityId")) != target_id:
+                raise RuntimeError("International upload activity identity mismatch")
+            return {"id": target_id, "created": True}
+        status, body, location = await self._request("GET", path, allow=(409,))
+        if status == 202:
+            return None
+        return self._upload_result(status, body, location)
+
+    @staticmethod
+    def _upload_result(status, body, location):
+        if status == 201 and location:
+            path = _upload_location(location, ACTIVITY_RECEIPT_PATH)
+            return {"id": activity_id(path.rsplit("/", 1)[1]), "created": True}
         try:
             imported = json.loads(body)["detailedImportResult"]
             successes = imported.get("successes", [])
@@ -262,8 +399,8 @@ class GlobalClient:
     async def update(self, target_id, fields):
         target_id = activity_id(target_id)
         payload = deepcopy(fields)
-        kind = payload["activityTypeDTO"]
-        if "typeId" not in kind or "parentTypeId" not in kind:
+        kind = payload.get("activityTypeDTO")
+        if kind is not None and ("typeId" not in kind or "parentTypeId" not in kind):
             if self._types is None:
                 self._types = await self._json(
                     "/activity-service/activity/activityTypes"
@@ -283,8 +420,10 @@ class GlobalClient:
         )
 
     async def download(self, target_id):
-        _, body = await self._request(
-            "GET", "/download-service/files/activity/" + activity_id(target_id)
+        _, body, _ = await self._request(
+            "GET",
+            "/download-service/files/activity/" + activity_id(target_id),
+            accept="*/*",
         )
         return unpack_activity(body)
 
@@ -297,7 +436,8 @@ class GlobalClient:
 
     async def close(self):
         await self.http.aclose()
-        self.auth.sess.close()
+        if self.auth is not None:
+            self.auth.close()
 
 
 class LoginError(RuntimeError):
@@ -311,11 +451,16 @@ def login(config, import_file=None):
     auth = None
     stage = "client initialization"
     try:
-        auth = _new_auth()
         if import_file:
             stage = "session import"
-            auth.loads(Path(import_file).read_text().strip())
+            secret = (
+                sys.stdin.read()
+                if import_file == "-"
+                else Path(import_file).read_text()
+            )
+            auth = _load_auth(secret.strip())
         else:
+            auth = _ConnectAuth()
             stage = "account input"
             email = input("International Garmin email: ").strip()
             stage = "password input"
@@ -324,15 +469,17 @@ def login(config, import_file=None):
             auth.login(
                 email,
                 password,
-                mfa_callback=lambda: getpass.getpass("Garmin verification code: "),
+                prompt_mfa=lambda: getpass.getpass("Garmin verification code: "),
             )
             del password
-        stage = "account region validation"
-        if auth.domain != "garmin.com":
-            raise RuntimeError("A Garmin international session is required")
         stage = "session storage"
-        destination = config.state / "private/garmin-global-session.txt"
-        atomic_write(destination, auth.dumps())
+        destination = config.state / SESSION_PATH
+        with job_lock(config, blocking=True):
+            _, seed_hash = _session_seed()
+            atomic_write(destination, auth.dumps())
+            write_json(
+                destination.with_suffix(".origin.json"), {"seed_hash": seed_hash}
+            )
         print(
             "Saved international session to "
             + str(destination)
@@ -344,12 +491,16 @@ def login(config, import_file=None):
         ) from None
     except KeyboardInterrupt:
         raise LoginError("International login cancelled") from None
+    except LoginError:
+        raise
     except Exception as exc:
         response = getattr(exc, "response", None)
         if response is None:
             response = getattr(getattr(exc, "error", None), "response", None)
         status = getattr(response, "status_code", None)
         detail = type(exc).__name__
+        if detail == "GarminConnectTooManyRequestsError":
+            status = 429
         if isinstance(status, int) and 100 <= status <= 599:
             detail += f", HTTP {status}"
         # Provider exception messages and bodies can contain passwords/tokens.
@@ -358,4 +509,4 @@ def login(config, import_file=None):
         ) from None
     finally:
         if auth is not None:
-            auth.sess.close()
+            auth.close()

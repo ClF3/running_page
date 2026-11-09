@@ -396,10 +396,8 @@ def publish(config, dry_run=False):
     if read_json(release / "files.json") != content_manifest(release / "dist"):
         raise RuntimeError("Pending build checksums differ; build it again")
     hostname = urllib.parse.urlsplit(config.site_url).hostname
-    if hostname != "run-dev.clf3.org":
-        raise RuntimeError(
-            "This deployment is restricted to run-dev.clf3.org; production cutover is separate"
-        )
+    if hostname not in {"run.clf3.org", "run-dev.clf3.org"}:
+        raise RuntimeError("Unsupported running-page deployment hostname")
     deployed = read_json(config.state / "deployed.json", {})
     if deployed.get("input_hash") == candidate["input_hash"]:
         return {"skipped": "already deployed"}
@@ -418,12 +416,17 @@ def publish(config, dry_run=False):
         with urllib.request.urlopen(request, timeout=30) as response:
             domains = json.load(response)
         if not domains.get("success") or not any(
-            x.get("hostname") == hostname and x.get("service") == config.worker
+            x.get("hostname") == hostname
+            and x.get("service") == config.worker
+            and x.get("environment", "production") == "production"
+            and x.get("enabled", True)
             for x in domains.get("result", [])
         ):
             raise RuntimeError(
                 "Cloudflare custom domain does not match the configured Worker"
             )
+    # Keep custom domains managed in Cloudflare. Setting routes here makes
+    # Wrangler replace the Worker's existing custom-domain bindings.
     wrangler = {
         "name": config.worker,
         "compatibility_date": "2026-11-06",
@@ -432,7 +435,6 @@ def publish(config, dry_run=False):
             "directory": "./dist",
             "not_found_handling": "single-page-application",
         },
-        "routes": [{"pattern": hostname, "custom_domain": True}],
     }
     write_json(release / "wrangler.json", wrangler)
     args = [
