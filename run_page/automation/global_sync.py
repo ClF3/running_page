@@ -21,9 +21,9 @@ import sqlite3
 import time
 import xml.etree.ElementTree as ET
 
-from .activity_files import ActivityFile, MAX_ACTIVITY_BYTES
+from .activity_files import ActivityFile, MAX_ACTIVITY_BYTES, OriginalUnavailable
 from .common import atomic_write, digest_file, digest_json, utcnow
-from .garmin import parse_time
+from .garmin import is_running, parse_time
 
 EDITABLE_STATS = (
     "distance",
@@ -50,8 +50,16 @@ def _connect(database):
         confirmed TEXT, target_id TEXT, owned INTEGER NOT NULL DEFAULT 0,
         phase TEXT NOT NULL DEFAULT 'pending', attempt TEXT NOT NULL DEFAULT '{}',
         error TEXT NOT NULL DEFAULT '', attempts INTEGER NOT NULL DEFAULT 0,
-        updated_at TEXT NOT NULL, last_attempt TEXT
+        updated_at TEXT NOT NULL, last_attempt TEXT,
+        refresh_requested INTEGER NOT NULL DEFAULT 0
     )""")
+    if "refresh_requested" not in {
+        row["name"] for row in db.execute("PRAGMA table_info(automation_global_sync)")
+    }:
+        db.execute(
+            "ALTER TABLE automation_global_sync "
+            "ADD COLUMN refresh_requested INTEGER NOT NULL DEFAULT 0"
+        )
     db.execute("""CREATE TABLE IF NOT EXISTS automation_global_account (
         singleton INTEGER PRIMARY KEY CHECK(singleton=1), account TEXT NOT NULL
     )""")
@@ -63,14 +71,35 @@ def _connect(database):
         db.close()
 
 
+def private_database(config):
+    return config.state / "private/global-activities/run_page/data.db"
+
+
+def private_source_ids(config):
+    database = private_database(config)
+    if not database.exists():
+        return set()
+    with sqlite3.connect(f"file:{database}?mode=ro", uri=True) as db:
+        return {
+            row[0] for row in db.execute("SELECT source_id FROM automation_global_sync")
+        }
+
+
+def _databases(config):
+    running = config.current / "run_page/data.db"
+    extra = private_database(config)
+    return (running, extra) if extra.exists() else (running,)
+
+
 def _fields(summary):
     """Only activity fields belong here: never copy privacy, gear or ownership."""
-    dto = summary.get("summaryDTO", {})
-    kind = summary.get("activityTypeDTO", {})
-    if not isinstance(kind.get("typeKey"), str) or "run" not in kind["typeKey"].lower():
-        raise RuntimeError("International delivery requires a running activity type")
-    if not dto.get("startTimeGMT") or dto.get("distance") is None:
+    dto = summary.get("summaryDTO") or {}
+    kind = summary.get("activityTypeDTO") or {}
+    if not isinstance(kind.get("typeKey"), str) or not kind["typeKey"].strip():
+        raise RuntimeError("International delivery requires an activity type")
+    if not dto.get("startTimeGMT"):
         raise RuntimeError("Incomplete international activity metadata")
+    parse_time(dto["startTimeGMT"])
     result = {
         "activityName": str(summary.get("activityName") or ""),
         "description": summary.get("description") or "",
@@ -98,34 +127,41 @@ def _path(snapshot, relative):
     return path
 
 
-def _origin(path, fallback):
+def _origin(file, fallback):
     """Original start survives manual edits to Garmin summary timestamps."""
     result = dict(fallback)
-    if path.suffix.lower() == ".fit":
+    if file.format == "fit":
         from garmin_fit_sdk import Decoder, Stream
         from garmin_fit_sdk.util import FIT_EPOCH_S
 
-        decoder = Decoder(Stream.from_file(str(path)))
+        decoder = Decoder(Stream.from_byte_array(bytearray(file.content)))
         messages, errors = decoder.read(convert_datetimes_to_dates=False)
         sessions = messages.get("session_mesgs", [])
-        if errors or len(sessions) != 1:
-            raise RuntimeError("Original FIT must contain one complete session")
-        session = sessions[0]
-        if session.get("start_time") is not None:
+        if errors or not sessions:
+            raise RuntimeError("Original FIT must contain a complete activity session")
+        starts = [s["start_time"] for s in sessions if s.get("start_time") is not None]
+        if starts:
             result["startTimeGMT"] = datetime.fromtimestamp(
-                float(session["start_time"]) + FIT_EPOCH_S, timezone.utc
+                float(min(starts)) + FIT_EPOCH_S, timezone.utc
             ).isoformat()
-        for source, target in (
-            ("total_elapsed_time", "duration"),
-            ("total_distance", "distance"),
-        ):
-            if session.get(source) is not None:
-                result[target] = float(session[source])
+        if len(sessions) == 1:
+            session = sessions[0]
+            for source, target in (
+                ("total_elapsed_time", "duration"),
+                ("total_distance", "distance"),
+            ):
+                if session.get(source) is not None:
+                    result[target] = float(session[source])
     else:
-        root = ET.fromstring(path.read_bytes())
-        if path.suffix.lower() == ".tcx":
+        root = ET.fromstring(file.content)
+        tag = root.tag.split("}")[-1]
+        if file.format == "tcx":
+            if tag != "TrainingCenterDatabase" or not root.findall(".//{*}Activity"):
+                raise RuntimeError("Original TCX must contain an activity")
             start = root.findtext(".//{*}Activity/{*}Id")
         else:
+            if tag != "gpx":
+                raise RuntimeError("Original activity is not GPX")
             start = (
                 root.findtext(".//{*}trkpt/{*}time")
                 or root.findtext("{*}extensions/{*}start_time")
@@ -140,14 +176,19 @@ def _origin(path, fallback):
 
 def _version(snapshot, fields, relative, original, verified=True, *, trimmed=False):
     path = _path(snapshot, relative)
+    file = ActivityFile(path.suffix.lower()[1:], path.read_bytes())
+    return _file_version(file, fields, relative, original, verified, trimmed=trimmed)
+
+
+def _file_version(file, fields, relative, original, verified=True, *, trimmed=False):
     value = {
         "fields": fields,
         "file": relative,
-        "file_hash": digest_file(path),
+        "file_hash": hashlib.sha256(file.content).hexdigest(),
         "original": bool(original),
         "metadata_verified": bool(verified),
         "trimmed": trimmed,
-        "origin": _origin(path, fields["summaryDTO"]),
+        "origin": _origin(file, fields["summaryDTO"]),
     }
     value["fingerprint"] = digest_json(value)
     return value
@@ -157,8 +198,6 @@ def enqueue_activity(
     database, source_id, summary, relative, *, original=True, verified=True
 ):
     """Stage one actual source version inside the disposable source snapshot."""
-    if not re.fullmatch(r"[0-9]{1,20}", str(source_id)) or int(source_id) <= 0:
-        raise RuntimeError("Invalid Garmin source activity ID")
     database = Path(database)
     desired = _version(
         database.parent.parent,
@@ -168,11 +207,22 @@ def enqueue_activity(
         verified,
         trimmed=(summary.get("metadataDTO") or {}).get("trimmed") is True,
     )
+    return _enqueue_version(database, source_id, desired)
+
+
+def _enqueue_version(database, source_id, desired):
+    if not re.fullmatch(r"[0-9]{1,20}", str(source_id)) or int(source_id) <= 0:
+        raise RuntimeError("Invalid Garmin source activity ID")
     with _connect(database) as db:
         old = db.execute(
             "SELECT * FROM automation_global_sync WHERE source_id=?", (str(source_id),)
         ).fetchone()
         if old and json.loads(old["desired"])["fingerprint"] == desired["fingerprint"]:
+            if old["refresh_requested"]:
+                db.execute(
+                    "UPDATE automation_global_sync SET refresh_requested=0 WHERE source_id=?",
+                    (str(source_id),),
+                )
             return False
         encoded = json.dumps(desired, ensure_ascii=False, sort_keys=True)
         if old:
@@ -182,7 +232,8 @@ def enqueue_activity(
                 else "pending"
             )
             db.execute(
-                "UPDATE automation_global_sync SET desired=?,phase=?,error=?,updated_at=? WHERE source_id=?",
+                "UPDATE automation_global_sync SET desired=?,phase=?,error=?,updated_at=?,"
+                "refresh_requested=0 WHERE source_id=?",
                 (encoded, phase, "", utcnow(), str(source_id)),
             )
         else:
@@ -204,6 +255,7 @@ def seed_history(config):
         known = {
             r[0] for r in db.execute("SELECT source_id FROM automation_global_sync")
         }
+    known.update(private_source_ids(config))
     session = init_db(str(database))
     try:
         activities = {str(row.run_id): row for row in session.query(Activity)}
@@ -263,13 +315,12 @@ def seed_history(config):
         session.close()
 
 
-def sync_status(config):
-    database = config.current / "run_page/data.db"
+def _queue_status(database):
     with sqlite3.connect(f"file:{database}?mode=ro", uri=True) as db:
         if not db.execute(
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name='automation_global_sync'"
         ).fetchone():
-            return {"enabled": config.global_sync, "counts": {}, "entries": []}
+            return {}, []
         db.row_factory = sqlite3.Row
         counts = dict(
             db.execute(
@@ -284,7 +335,32 @@ def sync_status(config):
                 "WHEN phase='done' THEN 3 ELSE 2 END,source_id DESC LIMIT 100"
             )
         ]
-        return {"enabled": config.global_sync, "counts": counts, "entries": entries}
+        return counts, entries
+
+
+def sync_status(config):
+    running, *other = _databases(config)
+    counts, entries = _queue_status(running)
+    result = {
+        "enabled": config.global_sync,
+        "standalone": config.global_sync_standalone,
+        "counts": counts,
+        "entries": entries,
+    }
+    if other:
+        other_counts, other_entries = _queue_status(other[0])
+        result["other_counts"] = other_counts
+        result["counts"] = dict(Counter(counts) + Counter(other_counts))
+        result["entries"] = sorted(
+            entries + other_entries,
+            key=lambda row: (
+                row["phase"] != "blocked",
+                not bool(row["error"]),
+                row["phase"] == "done",
+                -int(row["source_id"]),
+            ),
+        )[:100]
+    return result
 
 
 def _write(database, source_id, **values):
@@ -298,6 +374,7 @@ def _write(database, source_id, **values):
         "error",
         "attempts",
         "last_attempt",
+        "refresh_requested",
     }
     if not values.keys() <= allowed:
         raise ValueError("Unknown delivery state field")
@@ -315,6 +392,30 @@ class Blocked(RuntimeError):
     """A conflict requiring explicit selection, never a reason to drop a row."""
 
 
+def _claim(claims, source_id, target_id):
+    if claims.setdefault(str(target_id), source_id) != source_id:
+        raise Blocked("destination_mapped_to_another_source")
+
+
+def _accounts_and_claims(config):
+    accounts, claims = {}, {}
+    for database in _databases(config):
+        with _connect(database) as db:
+            bound = db.execute(
+                "SELECT account FROM automation_global_account WHERE singleton=1"
+            ).fetchone()
+            accounts[database] = bound[0] if bound else None
+            for row in db.execute(
+                "SELECT source_id,target_id,attempt FROM automation_global_sync "
+                "WHERE target_id IS NOT NULL OR attempt!='{}'"
+            ):
+                attempt = json.loads(row["attempt"])
+                for target_id in (row["target_id"], attempt.get("new_id")):
+                    if target_id:
+                        _claim(claims, row["source_id"], target_id)
+    return accounts, claims
+
+
 def _same_time(left, right, *, local=False):
     try:
         a, b = parse_time(left), parse_time(right)
@@ -326,11 +427,7 @@ def _same_time(left, right, *, local=False):
 
 
 def _matches(row, identity):
-    kind = row.get("activityType") or {}
-    if (
-        not isinstance(kind, dict)
-        or "run" not in str(kind.get("typeKey", "running")).lower()
-    ):
+    if not is_running(row.get("activityType") or {"typeKey": "running"}):
         return False
     if not _same_time(row.get("startTimeGMT"), identity.get("startTimeGMT")):
         return False
@@ -523,6 +620,15 @@ async def _confirm_update(
 
 
 async def _confirm_upload(database, source_id, attempt, client, index):
+    if attempt.get("verify_original"):
+        if await client.summary(attempt["new_id"]) is None:
+            raise RuntimeError("International activity is not yet visible")
+        original = await client.download(attempt["new_id"])
+        if (
+            hashlib.sha256(original.content).hexdigest()
+            != attempt["version"]["file_hash"]
+        ):
+            raise Blocked("uploaded_original_verification_failed")
     await _confirm_update(
         database,
         source_id,
@@ -535,7 +641,7 @@ async def _confirm_upload(database, source_id, attempt, client, index):
     _requeue_newer_version(database, source_id, attempt["version"])
 
 
-async def _finish_upload(database, source_id, attempt, result, client, index):
+async def _finish_upload(database, source_id, attempt, result, client, index, claims):
     if not result.get("id"):
         raise RuntimeError("Upload needs reconciliation before another attempt")
     new_id = str(result["id"])
@@ -545,6 +651,7 @@ async def _finish_upload(database, source_id, attempt, result, client, index):
         else any(str(r["activityId"]) == new_id for r in index)
     )
     new_owned = bool(result.get("created")) and not preexisting
+    _claim(claims, source_id, new_id)
     attempt.update(new_id=new_id, new_owned=new_owned)
     old_id, old_hash = attempt["old_id"], attempt["old_file_hash"]
     if old_id and old_hash and old_hash != attempt["version"]["file_hash"]:
@@ -569,19 +676,22 @@ async def _finish_upload(database, source_id, attempt, result, client, index):
     await _confirm_upload(database, source_id, attempt, client, index)
 
 
-async def _poll_upload(database, source_id, attempt, client, index):
+async def _poll_upload(database, source_id, attempt, client, index, claims):
     for delay in (0, 1, 2, 4):
         if delay:
             await asyncio.sleep(delay)
         result = await client.upload_status(attempt["receipt"])
         if result is not None:
-            await _finish_upload(database, source_id, attempt, result, client, index)
+            await _finish_upload(
+                database, source_id, attempt, result, client, index, claims
+            )
             return
 
 
-async def _ensure_original(config, row, desired, source_client):
+async def _ensure_original(database, row, desired, source_client, *, private, refresh):
     if (
-        desired["original"]
+        not refresh
+        and desired["original"]
         and desired.get("metadata_verified", True)
         and "trimmed" in desired
     ):
@@ -599,35 +709,45 @@ async def _ensure_original(config, row, desired, source_client):
             raise RuntimeError("Original activity summary identity mismatch")
         fields = _fields(summary)
         trimmed = (summary.get("metadataDTO") or {}).get("trimmed") is True
-    if desired["original"]:
-        desired = _version(
-            config.current, fields, desired["file"], True, trimmed=trimmed
-        )
-        _write(
-            config.current / "run_page/data.db",
-            source_id,
-            desired=json.dumps(desired, sort_keys=True),
-        )
+    if not private and not is_running(fields["activityTypeDTO"]):
+        raise Blocked("source_type_changed_since_catalog")
+    snapshot = database.parent.parent
+    if desired["original"] and not refresh:
+        desired = _version(snapshot, fields, desired["file"], True, trimmed=trimmed)
+        _enqueue_version(database, source_id, desired)
         return desired
-    original = await source_client.download(source_id)
+    try:
+        original = await source_client.download(source_id)
+    except OriginalUnavailable:
+        raise Blocked("source_activity_has_no_original") from None
     if not isinstance(original, ActivityFile):
+        if private:
+            raise Blocked("source_requires_original_activity_export")
         original = ActivityFile("gpx", original)
-    original.gpx()  # Fully validate before writing or uploading the cache.
+    if not 0 < len(original.content) <= MAX_ACTIVITY_BYTES:
+        raise RuntimeError("Original activity is empty or too large")
+    if not private:
+        original.gpx()
     folder = {"fit": "FIT_OUT", "tcx": "TCX_OUT", "gpx": "ORIGINAL_OUT"}[
         original.format
     ]
-    relative = f"{folder}/{source_id}.{original.format}"
-    atomic_write(config.current / relative, original.content)
-    desired = _version(config.current, fields, relative, True, trimmed=trimmed)
-    _write(
-        config.current / "run_page/data.db",
-        source_id,
-        desired=json.dumps(desired, sort_keys=True),
+    name = (
+        f"{source_id}-{hashlib.sha256(original.content).hexdigest()}"
+        if private
+        else source_id
     )
+    relative = f"{folder}/{name}.{original.format}"
+    desired = _file_version(original, fields, relative, True, trimmed=trimmed)
+    path = snapshot / relative
+    if not path.is_file() or digest_file(path) != desired["file_hash"]:
+        atomic_write(path, original.content)
+    _enqueue_version(database, source_id, desired)
     return desired
 
 
-async def _process(config, database, row, client, index, source_client):
+async def _process(
+    database, row, client, index, source_client, claims, *, private, retry_blocked
+):
     source_id = row["source_id"]
     desired = json.loads(row["desired"])
     confirmed = json.loads(row["confirmed"]) if row["confirmed"] else None
@@ -639,9 +759,21 @@ async def _process(config, database, row, client, index, source_client):
         await _confirm_upload(database, source_id, attempt, client, index)
         return
     if row["phase"] == "uploading" and attempt.get("receipt"):
-        await _poll_upload(database, source_id, attempt, client, index)
+        await _poll_upload(database, source_id, attempt, client, index, claims)
         return
-    desired = await _ensure_original(config, row, desired, source_client)
+    prior_fingerprint = desired["fingerprint"]
+    desired = await _ensure_original(
+        database,
+        row,
+        desired,
+        source_client,
+        private=private,
+        refresh=bool(row["refresh_requested"]),
+    )
+    if (
+        row["phase"] == "done" or (row["phase"] == "blocked" and not retry_blocked)
+    ) and desired["fingerprint"] == prior_fingerprint:
+        return
     target_id, owned = row["target_id"], bool(row["owned"])
     replacement = bool(
         target_id and confirmed and confirmed["file_hash"] != desired["file_hash"]
@@ -663,11 +795,12 @@ async def _process(config, database, row, client, index, source_client):
         candidates = [
             r
             for r in index
-            if any(_matches(r, i) for i in identities)
+            if not private
+            and any(_matches(r, i) for i in identities)
             and (not replacement or str(r["activityId"]) != str(target_id))
         ]
         unique = {str(r["activityId"]) for r in candidates}
-        if not unique and not target_id:
+        if not unique and (not target_id or private):
             same_start = {
                 str(item["activityId"])
                 for item in index
@@ -675,6 +808,7 @@ async def _process(config, database, row, client, index, source_client):
                     _same_time(item.get("startTimeGMT"), identity.get("startTimeGMT"))
                     for identity in identities
                 )
+                and (not replacement or str(item["activityId"]) != str(target_id))
             }
             known_hashes = {
                 desired["file_hash"],
@@ -690,6 +824,7 @@ async def _process(config, database, row, client, index, source_client):
             raise Blocked("ambiguous_destination_match")
         if unique:
             matched_id = unique.pop()
+            _claim(claims, source_id, matched_id)
             if replacement:
                 attempt = {
                     "old_id": target_id,
@@ -731,10 +866,9 @@ async def _process(config, database, row, client, index, source_client):
                     datetime.now(timezone.utc) - parse_time(attempt["started_at"])
                 ).total_seconds() < 300:
                     return  # Allow an accepted upload to appear before retrying a POST.
-            desired = await _ensure_original(config, row, desired, source_client)
             if desired.get("trimmed"):
                 raise Blocked("trimmed_activity_requires_effective_file")
-            path = _path(config.current, desired["file"])
+            path = _path(database.parent.parent, desired["file"])
             if digest_file(path) != desired["file_hash"]:
                 raise RuntimeError("Queued original activity changed before upload")
             attempt = {
@@ -743,6 +877,7 @@ async def _process(config, database, row, client, index, source_client):
                 "old_id": target_id,
                 "old_owned": owned,
                 "old_file_hash": confirmed["file_hash"] if confirmed else None,
+                "verify_original": private,
             }
             _write(
                 database,
@@ -761,12 +896,21 @@ async def _process(config, database, row, client, index, source_client):
                     source_id,
                     attempt=json.dumps(attempt, sort_keys=True),
                 )
-                await _poll_upload(database, source_id, attempt, client, index)
+                await _poll_upload(database, source_id, attempt, client, index, claims)
             else:
                 await _finish_upload(
-                    database, source_id, attempt, result, client, index
+                    database, source_id, attempt, result, client, index, claims
                 )
             return
+    if (
+        target_id
+        and target_id == attempt.get("new_id")
+        and attempt.get("verify_original")
+    ):
+        # Rechecking a blocked upload must still verify the original bytes
+        # from its receipt, even if the source was edited in the meantime.
+        await _confirm_upload(database, source_id, attempt, client, index)
+        return
     await _confirm_update(
         database, source_id, target_id, owned, desired, client, index, confirmed
     )
@@ -780,43 +924,58 @@ async def run_sync(
     dry_run=False,
     limit=None,
     retry_blocked=False,
+    private_only=False,
 ):
-    database = config.current / "run_page/data.db"
-    with _connect(database) as db:
-        rows = [
-            dict(row)
-            for row in db.execute(
-                "SELECT * FROM automation_global_sync WHERE phase!='done' ORDER BY CASE WHEN last_attempt IS NULL THEN 1 ELSE 0 END,last_attempt,source_id DESC"
+    private_db = private_database(config)
+    rows = []
+    for database in _databases(config):
+        private = database == private_db
+        if (private and not config.global_sync_all_activities) or (
+            private_only and not private
+        ):
+            continue
+        with _connect(database) as db:
+            rows.extend(
+                (database, dict(row))
+                for row in db.execute(
+                    "SELECT * FROM automation_global_sync WHERE phase!='done' "
+                    "OR refresh_requested=1"
+                )
             )
-        ]
-    rows.sort(
-        key=lambda r: (
-            parse_time(json.loads(r["desired"])["fields"]["summaryDTO"]["startTimeGMT"])
-            < datetime.now(timezone.utc) - timedelta(days=config.days),
-            r["last_attempt"] is not None,
-            r["last_attempt"] or "",
-            -parse_time(
-                json.loads(r["desired"])["fields"]["summaryDTO"]["startTimeGMT"]
-            ).timestamp(),
+    cutoff = datetime.now(timezone.utc) - timedelta(days=config.days)
+
+    def priority(entry):
+        _, row = entry
+        start = parse_time(
+            json.loads(row["desired"])["fields"]["summaryDTO"]["startTimeGMT"]
         )
-    )
+        return (
+            start < cutoff,
+            row["last_attempt"] is not None,
+            row["last_attempt"] or "",
+            -start.timestamp(),
+        )
+
+    rows.sort(key=priority)
     if not rows and not dry_run:
-        return {"processed": 0, **sync_status(config)}
+        return {"processed": 0, "retryable_failures": 0, **sync_status(config)}
     account = await client.identity()
-    with _connect(database) as db:
-        bound = db.execute(
-            "SELECT account FROM automation_global_account WHERE singleton=1"
-        ).fetchone()
-        if bound and bound[0] != account:
-            raise RuntimeError(
-                "International account differs from the bound destination account"
-            )
-        if not bound and not dry_run:
-            db.execute("INSERT INTO automation_global_account VALUES(1,?)", (account,))
+    accounts, claims = _accounts_and_claims(config)
+    if any(bound not in (None, account) for bound in accounts.values()):
+        raise RuntimeError(
+            "International account differs from the bound destination account"
+        )
+    if not dry_run:
+        for database, bound in accounts.items():
+            if bound is None:
+                with _connect(database) as db:
+                    db.execute(
+                        "INSERT INTO automation_global_account VALUES(1,?)", (account,)
+                    )
     index = await client.activities()  # Complete pagination is required before writes.
     if dry_run:
         plan = Counter()
-        for row in rows:
+        for database, row in rows:
             desired = json.loads(row["desired"])
             if row["target_id"]:
                 plan["mapped_pending"] += 1
@@ -825,7 +984,8 @@ async def run_sync(
             matches = {
                 str(item["activityId"])
                 for item in index
-                if any(_matches(item, identity) for identity in identities)
+                if database != private_db
+                and any(_matches(item, identity) for identity in identities)
             }
             if len(matches) == 1:
                 plan["existing_match"] += 1
@@ -846,37 +1006,54 @@ async def run_sync(
             "plan": dict(plan),
             **sync_status(config),
         }
-    processed, failed = 0, 0
+    processed, failed, blocked = 0, 0, 0
     started = time.monotonic()
-    for row in rows:
+    for database, row in rows:
         if (
             processed >= (limit or config.global_sync_limit)
             or time.monotonic() - started >= 600
         ):
             break
-        if row["phase"] == "blocked" and not retry_blocked:
+        if row["phase"] == "blocked" and not (
+            retry_blocked or row["refresh_requested"]
+        ):
             continue
         _write(
             database,
             row["source_id"],
             attempts=row["attempts"] + 1,
             last_attempt=utcnow(),
-            error="",
         )
         logging.info(
             "Delivering CN activity %s to international account", row["source_id"]
         )
         try:
             async with asyncio.timeout(max(1, 600 - (time.monotonic() - started))):
-                await _process(config, database, row, client, index, source_client)
+                await _process(
+                    database,
+                    row,
+                    client,
+                    index,
+                    source_client,
+                    claims,
+                    private=database == private_db,
+                    retry_blocked=retry_blocked,
+                )
         except Blocked as exc:
             failed += 1
+            blocked += 1
             logging.warning(
                 "International delivery blocked for source %s: %s",
                 row["source_id"],
                 str(exc),
             )
-            _write(database, row["source_id"], phase="blocked", error=str(exc))
+            _write(
+                database,
+                row["source_id"],
+                phase="blocked",
+                error=str(exc),
+                refresh_requested=0,
+            )
         except Exception:
             failed += 1
             # Preserve uploading/retiring phases: a timeout is not proof that a
@@ -887,13 +1064,30 @@ async def run_sync(
                 row["source_id"],
             )
         processed += 1
-    return {"processed": processed, "failed": failed, **sync_status(config)}
+    return {
+        "processed": processed,
+        "failed": failed,
+        "retryable_failures": failed - blocked,
+        **sync_status(config),
+    }
 
 
-def deliver(config, *, backfill=False, dry_run=False, limit=None, retry_blocked=False):
+def deliver(
+    config,
+    *,
+    backfill=False,
+    dry_run=False,
+    limit=None,
+    retry_blocked=False,
+    catalog=None,
+    full=False,
+    private_only=False,
+):
     """CLI/pipeline interface. Call while holding the existing runner lock."""
     if config.garmin_region != "cn":
         raise RuntimeError("International delivery requires a CN source account")
+    if private_only and not config.global_sync_all_activities:
+        raise RuntimeError("Enable all-activity synchronization first")
     from .common import write_json
     from .global_client import GlobalClient
     from .garmin import create_client
@@ -901,35 +1095,80 @@ def deliver(config, *, backfill=False, dry_run=False, limit=None, retry_blocked=
     class LazySource:
         client = None
 
-        async def download(self, source_id):
+        @property
+        def active(self):
             if self.client is None:
                 self.client = create_client(config)
-            return await self.client.download(source_id)
+            return self.client
+
+        async def download(self, source_id):
+            return await self.active.download(source_id)
 
         async def summary(self, source_id):
-            if self.client is None:
-                self.client = create_client(config)
-            return await self.client.summary(source_id)
+            return await self.active.summary(source_id)
 
         async def close(self):
             if self.client is not None:
                 await self.client.close()
 
-    if backfill:
-        seed_history(config)
-
     async def execute():
         source = LazySource()
         client = GlobalClient(config)
         try:
-            return await run_sync(
+            scan_failed = False
+            scan_mode = None
+            if config.global_sync_all_activities or config.global_sync_standalone:
+                from .global_discovery import discover_activities, independent_catalog
+
+                try:
+                    complete = catalog
+                    reusable = set()
+                    include_running = (
+                        config.global_sync_standalone
+                        and not private_only
+                        and catalog is None
+                    )
+                    if include_running:
+                        complete, reusable, scan_mode = await independent_catalog(
+                            config, source.active, full=full
+                        )
+                    elif complete is None:
+                        complete = await source.active.activities(
+                            all_types=config.global_sync_all_activities
+                        )
+                        scan_mode = "full"
+                    discover_activities(
+                        config,
+                        complete,
+                        full=full,
+                        include_running=include_running,
+                        reusable=reusable,
+                    )
+                except Exception:
+                    if dry_run:
+                        raise
+                    scan_failed = True
+                    logging.warning(
+                        "All-activity discovery failed; retrying the durable queue"
+                    )
+            if backfill and not private_only:
+                seed_history(config)
+            result = await run_sync(
                 config,
                 client,
                 source_client=source,
                 dry_run=dry_run,
                 limit=limit,
                 retry_blocked=retry_blocked,
+                private_only=private_only,
             )
+            if scan_failed:
+                result["source_scan_error"] = "all_activity_discovery_failed"
+                result["failed"] = result.get("failed", 0) + 1
+                result["retryable_failures"] = result.get("retryable_failures", 0) + 1
+            elif scan_mode:
+                result["source_scan"] = scan_mode
+            return result
         finally:
             await client.close()
             await source.close()
@@ -944,30 +1183,33 @@ def link_activity(config, source_id, target_id):
     """Explicitly resolve an ambiguous match; adoption never grants ownership."""
     from .global_client import GlobalClient, activity_id
 
-    database = config.current / "run_page/data.db"
     target_id = activity_id(target_id)
-    with _connect(database) as db:
-        row = db.execute(
-            "SELECT * FROM automation_global_sync WHERE source_id=?", (str(source_id),)
-        ).fetchone()
-    if row is None:
+    found = []
+    for database in _databases(config):
+        with _connect(database) as db:
+            row = db.execute(
+                "SELECT * FROM automation_global_sync WHERE source_id=?",
+                (str(source_id),),
+            ).fetchone()
+        if row is not None:
+            found.append((database, row))
+    if len(found) != 1:
         raise RuntimeError(
-            "Source activity is not queued; run global-sync --backfill --dry-run first"
+            "Source activity needs one queue entry; inspect global-sync --backfill --dry-run"
         )
+    database, row = found[0]
     desired = json.loads(row["desired"])
+    accounts, claims = _accounts_and_claims(config)
+    _claim(claims, str(source_id), target_id)
 
     async def check():
         client = GlobalClient(config)
         try:
             account = await client.identity()
-            with _connect(database) as db:
-                bound = db.execute(
-                    "SELECT account FROM automation_global_account WHERE singleton=1"
-                ).fetchone()
-                if bound and bound[0] != account:
-                    raise RuntimeError(
-                        "International account differs from the bound destination account"
-                    )
+            if any(bound not in (None, account) for bound in accounts.values()):
+                raise RuntimeError(
+                    "International account differs from the bound destination account"
+                )
             target = await client.summary(target_id)
             if target is None:
                 raise RuntimeError("Selected international activity does not exist")

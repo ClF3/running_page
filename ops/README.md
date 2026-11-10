@@ -183,13 +183,23 @@ ssh -t violet /data/tianyi/running-page/current/ops/global-login --enable
 ### 同步行为
 
 - 首次对全部本地跑步建立待同步清单，并分页读取国际区所有活动。跑步活动以 UTC 开始时间、时长、距离匹配，名称不参与识别。开始时间相同但国际区活动属于其他运动类型，或统计值不一致时，比对原始文件。唯一匹配时记录国区 ID → 国际区 ID。匹配有歧义或无法确认时标为 `blocked`，等待人工核对。
+- 在已启用 `global_sync` 的配置中设置 `"global_sync_all_activities": true`，即可同时同步国区活动列表中的其他类型。每轮共用一份国区列表，网站从中筛选跑步。国区改类型时沿用已有的国际区活动映射，网站按当前类型收录。
+- 非跑步先核对原始 FIT、TCX 或 GPX。国际区候选只有在原件校验值唯一匹配时才会认领，随后按国区更新类型、名称、说明和可编辑统计。室内运动可以直接同步原件。缺少原件、同起始时间但无法核对、或遇到无法安全上传的剪辑时，保留待核对状态。
 - 本地已有 GPX/FIT 不代表上传成功。缺少原始文件时重新读取国区摘要和原始 FIT/TCX/GPX，保留传感器与室内跑数据；下载成功才处理上传。
 - 每小时扫描新增及最近 30 天活动时，对原始文件及同步字段计算指纹。名称、说明、类型、开始时间、距离、用时、心率、爬升等发生变化时入队，与网页是否需要重新构建无关。历史修改仍可通过 `refresh --all` 检查。
-- 队列、目标账号绑定、目标活动 ID、确认过的版本和未完成操作均存入 `run_page/data.db`，随完整备份恢复。上传、修改或删除前先提交操作状态；网络中断后先对账，再继续，上传 POST 不在网络层盲目重试。
+- 跑步队列、账号绑定、目标活动 ID 和回执随跑步快照备份。新增的其他活动及其同步状态保存在 `state/private/global-activities`，公开备份以跑步快照为边界。上传、修改或删除前先提交操作状态，网络中断后先对账再继续。
 - 佳明异步导入时会返回 HTTP 202。程序保存处理回执，等佳明确认活动 ID 后再同步可编辑字段和读回核对。同步结果核验通过才记为 `done`，账号、隐私、装备、收藏和社交数据不参与复制。
 - 原始文件变化时，仅允许替换本工具明确创建的活动。先上传新版本、读回摘要、下载核对原始文件，再校验旧活动的归属与原始文件，最后删除旧版本并确认已删除。已有活动的认领不授予删除权限。
 - 如果服务器将新版本判为旧活动的重复导入，或新旧原始文件核验失败，保留旧活动并记为 `blocked`。不会通过先删除旧活动来绕过服务器判重，也不会将未完成的轨迹替换标为成功。
-- 每轮默认最多处理 25 条，优先近期记录，单轮国际区处理预算 10 分钟。尚未处理或失败的条目保留到后续轮次。可用 `global_sync_limit` 调整批量。国际区失败单独记入 `jobs.global-sync`，不阻止完整网页版本发布；源站或发布失败时，也会尝试补传上次已完整下载的队列。
+- 每轮默认最多处理 25 条，优先近期记录，单轮国际区投递预算 10 分钟。尚未处理或失败的条目保留到后续轮次。可用 `global_sync_limit` 调整批量，运行结果见 `jobs.global-sync`。
+
+### 独立定时同步
+
+配置 `"global_sync_standalone": true` 后，网站定时任务准备跑步数据并发布，`running-page-global-sync.timer` 单独触发国际区同步。国际区任务按北京时间每小时 :40 运行，停机恢复时补跑一轮。它读取近 30 天的新列表并复用近期完整目录和网站已准备的原件。完整目录过期、缺失或账号变化时，任务自行读取全量目录。
+
+国际区任务与网站、备份及手动操作共享数据锁，最多等待 20 分钟。超时会记录延期，下一轮继续处理。已知待核对活动列在 `counts.blocked`，本轮可重试的故障列在 `retryable_failures`。
+
+全新部署由 `ops/install` 安装单位文件。升级现有部署时可以仅安装 `running-page-global-sync.service` 和 `running-page-global-sync.timer`，保留本机的网站定时配置。首次运行 `ops/run global-sync --scheduled` 验收后，再运行 `ops/enable` 启用定时器。手动 `refresh --all` 仍可触发历史对账。
 
 ### 查看、补传及处理冲突
 
@@ -202,6 +212,9 @@ ssh -t violet /data/tianyi/running-page/current/ops/global-login --enable
 
 # 手动多处理一批；仍受单轮 10 分钟预算约束
 /data/tianyi/running-page/current/ops/run global-sync --backfill --limit 100
+
+# 预览私有队列；去掉 --dry-run 后处理这一队列
+/data/tianyi/running-page/current/ops/run global-sync --private-activities --dry-run
 
 # 明确选择国际区已有活动，解决多条匹配；所选活动会保留为非本工具创建
 /data/tianyi/running-page/current/ops/run global-link --source-id <国区ID> --target-id <国际区ID>

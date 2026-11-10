@@ -18,7 +18,7 @@ import time
 
 import httpx
 
-from .activity_files import MAX_ACTIVITY_BYTES, unpack_activity
+from .activity_files import MAX_ACTIVITY_BYTES, OriginalUnavailable, unpack_activity
 from .common import read_json, write_json
 from .garmin import ActivityEndpoints
 
@@ -82,6 +82,10 @@ class PersonalApiClient(ActivityEndpoints):
         except (ValueError, RuntimeError):
             logging.warning("Ignoring invalid Personal API token cache")
         self.http = http or httpx.AsyncClient(timeout=httpx.Timeout(120, connect=20))
+
+    @property
+    def catalog_scope(self):
+        return self._fingerprint
 
     async def _send(self, method, path, headers, limit):
         for attempt in range(3):
@@ -160,7 +164,7 @@ class PersonalApiClient(ActivityEndpoints):
         logging.info("Personal API access token renewed and cached")
         return token
 
-    async def request(self, path, as_json=True):
+    async def request(self, path, as_json=True, *, original=False):
         token = await self.obtain_token()
         for attempt in range(2):
             status, body = await self._send(
@@ -184,6 +188,8 @@ class PersonalApiClient(ActivityEndpoints):
             if status == 401 and attempt == 0:
                 token = await self.obtain_token(force=True)
                 continue
+            if original and status in (204, 404):
+                raise OriginalUnavailable("Garmin returned no original activity file")
             hint = "; check the key and region" if status in (401, 403) else ""
             raise RuntimeError(
                 f"Garmin Personal API request failed (HTTP {status}){hint}"
@@ -193,5 +199,7 @@ class PersonalApiClient(ActivityEndpoints):
         if not re.fullmatch(r"[0-9]{1,20}", str(source_id)) or int(source_id) <= 0:
             raise RuntimeError("Invalid Garmin activity ID")
         return unpack_activity(
-            await self.request(f"/download-service/files/activity/{source_id}", False)
+            await self.request(
+                f"/download-service/files/activity/{source_id}", False, original=True
+            )
         )

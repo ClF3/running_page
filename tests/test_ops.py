@@ -47,6 +47,25 @@ class HostDeploymentTest(unittest.TestCase):
             (units / "running-page-update.service").read_text(),
         )
 
+    def test_installing_global_timer_preserves_local_website_schedule(self):
+        units = self.root / "units"
+        units.mkdir()
+        website = units / "running-page-update.timer"
+        website.write_text("OnCalendar=*-*-* *:10:00 Asia/Shanghai\n")
+        timer_name = "running-page-global-sync.timer"
+        service_name = "running-page-global-sync.service"
+        install_units(
+            self.source,
+            units,
+            self.root / "deployment",
+            user_mode=True,
+            only={timer_name, service_name},
+        )
+        self.assertIn("*:10:00", website.read_text())
+        self.assertIn("*:40:00 Asia/Shanghai", (units / timer_name).read_text())
+        self.assertIn("Persistent=true", (units / timer_name).read_text())
+        self.assertIn("global-sync --scheduled", (units / service_name).read_text())
+
     def test_host_environment_uses_persisted_user_paths_and_uid(self):
         (self.source / "ops/runtime.env").write_text(
             f"RUNNING_PAGE_ROOT={self.root}/deployment\n"

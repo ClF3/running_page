@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 import os
 import re
@@ -112,24 +112,59 @@ def bootstrap(config, source):
     return {"activities": validate_snapshot(config.current)}
 
 
-def synchronize(config, full=False, client=None):
+def synchronize(config, full=False, client=None, *, catalog=None):
     path = new_snapshot(config, config.current)
 
     async def execute():
         active = client or create_client(config)
         try:
-            return await sync_snapshot(
-                path, active, config.days, full, queue_global=config.global_sync
+            remote = None
+            catalog_at = None
+            queued = set() if config.global_sync_standalone else None
+            if config.global_sync_all_activities or config.global_sync_standalone:
+                try:
+                    remote = await active.activities(
+                        all_types=config.global_sync_all_activities
+                    )
+                    catalog_at = datetime.now(timezone.utc)
+                except Exception:
+                    logging.warning(
+                        "All-activity scan unavailable; using Garmin running list"
+                    )
+                if catalog is not None and remote is not None:
+                    catalog.extend(remote)
+            from .global_sync import private_source_ids
+
+            result = await sync_snapshot(
+                path,
+                active,
+                config.days,
+                full,
+                queue_global=config.global_sync,
+                catalog=remote,
+                private_ids=private_source_ids(config) if config.global_sync else (),
+                queued=queued,
+            )
+            return (
+                result,
+                remote,
+                getattr(active, "catalog_scope", None),
+                queued,
+                catalog_at,
             )
         finally:
             if client is None:
                 await active.close()
 
     try:
-        result = asyncio.run(execute())
+        result, remote, scope, queued, catalog_at = asyncio.run(execute())
         validate_snapshot(path)
         config.promote(path)
         write_json(config.state / "sync.json", {"last_success": utcnow(), **result})
+        if queued is not None and remote is not None:
+            from .global_discovery import remember_catalog
+
+            remember_catalog(config, scope, remote, queued, now=catalog_at)
         return result
     except BaseException:
         discard_unpublished_snapshot(config, path)
@@ -482,6 +517,8 @@ def make_backup(config, local_only=False):
                 "refresh_days": config.days,
                 "garmin_region": config.garmin_region,
                 "global_sync": config.global_sync,
+                "global_sync_standalone": config.global_sync_standalone,
+                "global_sync_all_activities": config.global_sync_all_activities,
                 "global_sync_limit": config.global_sync_limit,
                 "repository": config.repository,
                 "backup_branch": config.branch,

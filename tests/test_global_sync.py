@@ -2,7 +2,7 @@
 
 import asyncio
 from copy import deepcopy
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 import json
 from pathlib import Path
@@ -12,9 +12,16 @@ import unittest
 from unittest.mock import patch
 
 from run_page.automation.common import Config, read_json
-from run_page.automation.activity_files import ActivityFile
+from run_page.automation.activity_files import ActivityFile, OriginalUnavailable
+from run_page.automation.global_discovery import (
+    discover_activities,
+    independent_catalog,
+    remember_catalog,
+)
 from run_page.automation.global_sync import (
     enqueue_activity,
+    deliver,
+    private_database,
     run_sync,
     sync_status,
     seed_history,
@@ -26,6 +33,7 @@ from run_page.automation.pipeline import (
     restore_archive,
 )
 from tests.test_automation import GPX, RUN_ID, FakeGarmin, seed, summary
+from tests.test_personal_api import real_fit
 
 
 class FakeGlobal:
@@ -106,6 +114,42 @@ class FakeGlobal:
     async def download(self, target_id):
         return ActivityFile("gpx", self.files[str(target_id)])
 
+    async def close(self):
+        pass
+
+
+class FakeAllActivities:
+    catalog_scope = "same-personal-key"
+
+    def __init__(self, record, original):
+        self.record = record
+        self.original = original
+        self.queries = []
+
+    async def activities(self, *, all_types=False, start_date=None):
+        assert all_types
+        self.queries.append(start_date)
+        return [
+            dict(
+                self.record["summaryDTO"],
+                activityId=self.record["activityId"],
+                activityType=self.record["activityTypeDTO"],
+            )
+        ]
+
+    async def summary(self, source_id):
+        assert source_id == str(self.record["activityId"])
+        return deepcopy(self.record)
+
+    async def download(self, source_id):
+        assert source_id == str(self.record["activityId"])
+        if self.original is None:
+            raise OriginalUnavailable("no original")
+        return self.original
+
+    async def close(self):
+        pass
+
 
 class GlobalSyncTest(unittest.TestCase):
     def setUp(self):
@@ -141,6 +185,211 @@ class GlobalSyncTest(unittest.TestCase):
 
     def execute(self, **kwargs):
         return asyncio.run(run_sync(self.cfg, self.remote, **kwargs))
+
+    def discover(self, source, *, full=False):
+        self.cfg.global_sync_all_activities = True
+        catalog = asyncio.run(source.activities(all_types=True))
+        discover_activities(self.cfg, catalog, full=full)
+
+    def test_independent_delivery_discovers_a_run_without_a_website_sync(self):
+        self.cfg.global_sync_standalone = self.cfg.global_sync_all_activities = True
+        original = real_fit(indoor=True, hour=1)
+        source = FakeAllActivities(
+            summary("200", hour=1), ActivityFile("fit", original)
+        )
+        website = self.cfg.current / "src/static/activities.json"
+        before = website.read_bytes()
+        with (
+            patch("run_page.automation.garmin.create_client", return_value=source),
+            patch(
+                "run_page.automation.global_client.GlobalClient",
+                return_value=self.remote,
+            ),
+        ):
+            result = deliver(self.cfg)
+        self.assertEqual(result["source_scan"], "full")
+        self.assertEqual(source.queries, [None])
+        self.assertEqual(result["counts"], {"done": 1})
+        self.assertEqual(self.remote.files, {"1000": original})
+        self.assertEqual(website.read_bytes(), before)
+
+    def test_recent_scan_adds_new_runs_and_reuses_prepared_history(self):
+        self.cfg.global_sync_all_activities = True
+        now = datetime(2026, 11, 10, tzinfo=timezone.utc)
+        earlier = summary("100")
+        existing = dict(
+            earlier["summaryDTO"],
+            activityId=100,
+            activityType=earlier["activityTypeDTO"],
+        )
+        source = FakeAllActivities(summary("200", hour=1), ActivityFile("gpx", GPX))
+        remember_catalog(
+            self.cfg,
+            source.catalog_scope,
+            [existing],
+            {"100"},
+            now=now - timedelta(minutes=30),
+        )
+        rows, reusable, mode = asyncio.run(
+            independent_catalog(self.cfg, source, now=now)
+        )
+        self.assertEqual(mode, "recent_with_history")
+        self.assertEqual(source.queries, ["2026-10-11"])
+        self.assertEqual({r["activityId"] for r in rows}, {100, 200})
+        self.assertEqual(reusable, {"100"})
+
+        source.catalog_scope = "different-personal-key"
+        rows, reusable, mode = asyncio.run(
+            independent_catalog(self.cfg, source, now=now)
+        )
+        self.assertEqual(mode, "full")
+        self.assertEqual(source.queries[-1], None)
+        self.assertEqual([r["activityId"] for r in rows], [200])
+        self.assertEqual(reusable, set())
+
+    def test_original_indoor_fit_is_delivered_and_edits_stay_private(self):
+        record = summary("200")
+        record["activityTypeDTO"] = {"typeKey": "strength_training"}
+        record["summaryDTO"]["distance"] = 0
+        fit = real_fit(indoor=True, sport="TRAINING")
+        source = FakeAllActivities(record, ActivityFile("fit", fit))
+        public = self.cfg.current / "src/static/activities.json"
+        before = public.read_bytes()
+        self.discover(source)
+        self.assertEqual(
+            self.execute(dry_run=True, private_only=True)["plan"], {"new_candidate": 1}
+        )
+        self.assertEqual(self.remote.uploads, [])
+
+        self.execute(source_client=source, private_only=True)
+        self.assertEqual(self.remote.files, {"1000": fit})
+        self.assertEqual(
+            self.remote.rows["1000"]["activityTypeDTO"]["typeKey"], "strength_training"
+        )
+        self.assertEqual(sync_status(self.cfg)["other_counts"], {"done": 1})
+
+        record["description"] = "Private training notes"
+        self.discover(source, full=True)
+        self.execute(source_client=source, private_only=True)
+        self.assertEqual(self.remote.rows["1000"]["description"], record["description"])
+        self.assertEqual(len(self.remote.uploads), 1)
+        self.assertEqual(public.read_bytes(), before)
+        make_backup(self.cfg, local_only=True)
+        recovered = self.root / "public-backup"
+        restore_archive(self.cfg.state / "latest-backup.tar.gz", recovered)
+        self.assertFalse((recovered / "private").exists())
+        self.assertFalse(list(recovered.rglob("*.fit")))
+
+    def test_nonrunning_history_uses_original_bytes_across_activity_types(self):
+        record = summary("200")
+        record["activityTypeDTO"] = {"typeKey": "hiking"}
+        source = FakeAllActivities(record, ActivityFile("gpx", GPX))
+        existing = summary("2000")
+        existing["activityTypeDTO"] = {"typeKey": "trail_running"}
+        self.remote.rows["2000"] = existing
+        self.remote.files["2000"] = GPX
+        self.discover(source)
+
+        self.execute(source_client=source, private_only=True)
+        self.assertEqual(self.remote.uploads, [])
+        self.assertEqual(self.remote.deletes, [])
+        self.assertEqual(
+            self.remote.rows["2000"]["activityTypeDTO"]["typeKey"], "hiking"
+        )
+        self.assertEqual(sync_status(self.cfg)["other_counts"], {"done": 1})
+        self.assertFalse(sync_status(self.cfg)["entries"][0]["owned"])
+
+    def test_nonrunning_never_claims_another_sources_target(self):
+        self.queue()
+        self.execute()
+        record = summary("200")
+        record["activityTypeDTO"] = {"typeKey": "cycling"}
+        source = FakeAllActivities(record, ActivityFile("gpx", GPX))
+        self.discover(source)
+
+        self.execute(source_client=source, private_only=True)
+        self.assertEqual(len(self.remote.uploads), 1)
+        self.assertEqual(
+            self.remote.rows["1000"]["activityTypeDTO"]["typeKey"], "running"
+        )
+        status = sync_status(self.cfg)
+        self.assertEqual(status["other_counts"], {"blocked": 1})
+        self.assertEqual(
+            status["entries"][0]["error"], "destination_mapped_to_another_source"
+        )
+
+    def test_activity_without_an_original_is_held(self):
+        record = summary("200")
+        record["activityTypeDTO"] = {"typeKey": "yoga"}
+        source = FakeAllActivities(record, None)
+        self.discover(source)
+        self.execute(source_client=source, private_only=True)
+
+        self.assertEqual(self.remote.uploads, [])
+        status = sync_status(self.cfg)
+        self.assertEqual(status["other_counts"], {"blocked": 1})
+        self.assertEqual(
+            status["entries"][0]["error"], "source_activity_has_no_original"
+        )
+
+    def test_private_upload_with_unverified_file_stays_blocked_on_retry(self):
+        class WrongOriginal(FakeGlobal):
+            async def upload(self, path):
+                result = await super().upload(path)
+                self.files[result["id"]] = GPX + b"\n"
+                return result
+
+        self.remote = WrongOriginal()
+        record = summary("200")
+        record["activityTypeDTO"] = {"typeKey": "cycling"}
+        source = FakeAllActivities(record, ActivityFile("gpx", GPX))
+        self.discover(source)
+
+        self.execute(source_client=source, private_only=True)
+        self.execute(source_client=source, private_only=True, retry_blocked=True)
+        self.assertEqual(sync_status(self.cfg)["other_counts"], {"blocked": 1})
+        self.assertEqual(self.remote.updates, [])
+        self.assertEqual(len(self.remote.uploads), 1)
+
+    def test_reclassification_preserves_both_activity_ids_and_website_scope(self):
+        self.queue()
+        self.execute()
+        record = summary("100")
+        record["activityTypeDTO"] = {"typeKey": "cycling"}
+        source = FakeAllActivities(record, ActivityFile("gpx", GPX))
+        self.cfg.global_sync_all_activities = True
+        catalog = []
+        synchronize(self.cfg, full=True, client=source, catalog=catalog)
+        self.assertEqual(read_json(self.cfg.current / "src/static/activities.json"), [])
+        discover_activities(self.cfg, catalog)
+        self.execute(source_client=source)
+        self.assertEqual(
+            self.remote.rows["1000"]["activityTypeDTO"]["typeKey"], "cycling"
+        )
+
+        record["activityTypeDTO"] = {"typeKey": "running"}
+        catalog = []
+        synchronize(self.cfg, client=source, catalog=catalog)
+        self.assertEqual(
+            [
+                r["run_id"]
+                for r in read_json(self.cfg.current / "src/static/activities.json")
+            ],
+            [RUN_ID],
+        )
+        discover_activities(self.cfg, catalog)
+        self.execute(source_client=source)
+        self.assertEqual(len(self.remote.uploads), 1)
+        self.assertEqual(
+            self.remote.rows["1000"]["activityTypeDTO"]["typeKey"], "running"
+        )
+        with sqlite3.connect(private_database(self.cfg)) as db:
+            self.assertEqual(
+                db.execute(
+                    "SELECT source_id,target_id,owned FROM automation_global_sync"
+                ).fetchall(),
+                [("100", "1000", 1)],
+            )
 
     def test_uploads_once_and_only_source_changes_trigger_metadata_updates(self):
         self.queue()

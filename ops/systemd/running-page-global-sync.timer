@@ -1,0 +1,10 @@
+[Unit]
+Description=Hourly Garmin international delivery at minute 40 Beijing time
+
+[Timer]
+OnCalendar=*-*-* *:40:00 Asia/Shanghai
+AccuracySec=1s
+Persistent=true
+
+[Install]
+WantedBy=timers.target

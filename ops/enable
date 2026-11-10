@@ -4,7 +4,7 @@ set -eu
 project_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 . "$project_root/ops/environment"
 [ "$running_page_user_mode" -eq 1 ] || [ "$(id -u)" -eq 0 ] || { echo 'Run with sudo'; exit 1; }
-python3 - "$project_root" <<'PY'
+timers=$(python3 - "$project_root" <<'PY'
 import json, subprocess, sys
 from pathlib import Path
 result = subprocess.run([str(Path(sys.argv[1])/'ops/run'), 'status'], check=True,
@@ -18,12 +18,20 @@ if not status['deployed'].get('deployed_at'):
     raise SystemExit('A real Cloudflare deployment must pass first')
 if not status['backup'].get('pushed_at'):
     raise SystemExit('A real GitHub backup push must pass first')
+timers = ['running-page-update.timer', 'running-page-backup.timer']
+if status.get('global_sync', {}).get('standalone'):
+    sync = status['jobs'].get('global-sync', {})
+    if sync.get('mode') != 'scheduled' or not sync.get('last_success') or sync.get('error'):
+        raise SystemExit('A real global-sync --scheduled run must pass first')
+    timers.append('running-page-global-sync.timer')
+print(' '.join(timers))
 PY
+)
 if [ "$running_page_user_mode" -eq 1 ]; then
   [ "$(loginctl show-user "$(id -un)" -p Linger --value)" = yes ] || { echo 'User lingering must be enabled first'; exit 1; }
   systemd-analyze --user verify "$running_page_units"/running-page-*
-  systemctl --user enable --now running-page-update.timer running-page-backup.timer
+  systemctl --user enable --now $timers
 else
   systemd-analyze verify "$running_page_units"/running-page-*
-  systemctl enable --now running-page-update.timer running-page-backup.timer
+  systemctl enable --now $timers
 fi

@@ -5,10 +5,12 @@ import shlex
 import sys
 
 
-def install_units(source, units, code_root, user_mode):
+def install_units(source, units, code_root, user_mode, *, only=None):
     source, units, code_root = Path(source), Path(units), Path(code_root)
     units.mkdir(parents=True, exist_ok=True)
     for template in (source / "ops/systemd").glob("running-page-*"):
+        if only is not None and template.name not in only:
+            continue
         text = template.read_text().replace("/opt/running-page", str(code_root))
         if user_mode:
             text = (
@@ -32,4 +34,6 @@ def install_units(source, units, code_root, user_mode):
 
 
 if __name__ == "__main__":
-    install_units(*sys.argv[1:4], user_mode=sys.argv[4] == "1")
+    install_units(
+        *sys.argv[1:4], user_mode=sys.argv[4] == "1", only=sys.argv[5:] or None
+    )

@@ -14,6 +14,7 @@ import shutil
 import sqlite3
 import subprocess
 import tempfile
+import time
 import urllib.parse
 from datetime import datetime, timezone
 
@@ -226,11 +227,19 @@ class Config:
         self.days = int(values.get("refresh_days", 30))
         self.garmin_region = values.get("garmin_region", "cn")
         self.global_sync = values.get("global_sync", False)
+        self.global_sync_standalone = values.get("global_sync_standalone", False)
+        self.global_sync_all_activities = values.get(
+            "global_sync_all_activities", False
+        )
         self.global_sync_limit = int(values.get("global_sync_limit", 25))
         self.timeout = int(values.get("command_timeout", 1800))
         if (
             self.days < 1
             or not isinstance(self.global_sync, bool)
+            or not isinstance(self.global_sync_standalone, bool)
+            or (self.global_sync_standalone and not self.global_sync)
+            or not isinstance(self.global_sync_all_activities, bool)
+            or (self.global_sync_all_activities and not self.global_sync)
             or not 1 <= self.global_sync_limit <= 1000
             or (self.global_sync and self.garmin_region != "cn")
             or self.garmin_region not in {"cn", "global"}
@@ -276,12 +285,20 @@ class Config:
 
 
 @contextlib.contextmanager
-def job_lock(config, name="runner.lock", blocking=False):
+def job_lock(config, name="runner.lock", blocking=False, *, wait_seconds=0):
+    deadline = time.monotonic() + wait_seconds
     with (config.state / name).open("a") as stream:
-        try:
-            fcntl.flock(stream, fcntl.LOCK_EX | (0 if blocking else fcntl.LOCK_NB))
-        except BlockingIOError as exc:
-            raise Busy("Another automation operation is running; retry later") from exc
+        while True:
+            try:
+                fcntl.flock(stream, fcntl.LOCK_EX | (0 if blocking else fcntl.LOCK_NB))
+                break
+            except BlockingIOError as exc:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise Busy(
+                        "Another automation operation is running; retry later"
+                    ) from exc
+                time.sleep(min(1, remaining))
         yield
 
 

@@ -1,0 +1,13 @@
+[Unit]
+Description=Synchronize Garmin activities to the international account
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/running-page/current/ops/run global-sync --scheduled
+TimeoutStartSec=45min
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7

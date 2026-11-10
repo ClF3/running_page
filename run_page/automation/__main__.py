@@ -112,6 +112,16 @@ def main(argv=None):
     )
     global_sync.add_argument("--limit", type=int)
     global_sync.add_argument("--retry-blocked", action="store_true")
+    global_sync.add_argument(
+        "--scheduled",
+        action="store_true",
+        help="Run the independent timer job and wait for the shared data lock",
+    )
+    global_sync.add_argument(
+        "--private-activities",
+        action="store_true",
+        help="Process only the private all-activity queue",
+    )
     global_login_parser = sub.add_parser(
         "global-login", help="Interactive international login; no password stored"
     )
@@ -172,11 +182,27 @@ def main(argv=None):
     jobs = read_json(config.state / "jobs.json", {})
     started = utcnow()
     backup_guard = None
+    scheduled = getattr(args, "scheduled", False)
+    if scheduled and args.dry_run:
+        parser.error("--scheduled requires an actual delivery")
+    if scheduled and not config.global_sync_standalone:
+        logging.info("Standalone international delivery is disabled")
+        print(json.dumps({"skipped": "standalone international delivery is disabled"}))
+        return 0
+    inline_delivery = not (config.global_sync_standalone and args.command == "update")
+    source_catalog = (
+        []
+        if inline_delivery
+        and (config.global_sync_all_activities or config.global_sync_standalone)
+        else None
+    )
+    result = None
 
-    def save_job(value, name=None):
+    def save_job(value, name=None, *, merge=False):
         with job_lock(config, "status.lock", blocking=True):
             latest = read_json(config.state / "jobs.json", {})
-            latest[name or args.command] = value
+            key = name or args.command
+            latest[key] = {**latest.get(key, {}), **value} if merge else value
             write_json(config.state / "jobs.json", latest)
 
     def try_global_sync():
@@ -184,7 +210,12 @@ def main(argv=None):
             return {"skipped": "international synchronization is disabled"}
         previous = read_json(config.state / "jobs.json", {}).get("global-sync", {})
         try:
-            outcome = deliver_global(config, backfill=True)
+            outcome = deliver_global(
+                config,
+                backfill=True,
+                catalog=source_catalog or None,
+                full=args.command == "refresh",
+            )
             healthy = not outcome.get("failed") and not outcome.get("counts", {}).get(
                 "blocked"
             )
@@ -219,7 +250,7 @@ def main(argv=None):
         if args.command == "backup":
             backup_guard = (config.state / "backup.lock").open("a")
             fcntl.flock(backup_guard, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        with job_lock(config):
+        with job_lock(config, wait_seconds=20 * 60 if scheduled else 0):
             # A killed container cannot run finally blocks. These are private
             # staging directories used only while this shared lock is held.
             import shutil
@@ -246,7 +277,9 @@ def main(argv=None):
                     except Exception:
                         logging.warning("Previous complete deployment is still pending")
                 try:
-                    result = synchronize(config, full=args.command == "refresh")
+                    result = synchronize(
+                        config, full=args.command == "refresh", catalog=source_catalog
+                    )
                 except Exception:
                     # Retry a previously complete candidate, without promoting any
                     # part of this failed synchronization round.
@@ -257,13 +290,15 @@ def main(argv=None):
                             logging.warning(
                                 "Previous complete deployment is still pending"
                             )
-                    try_global_sync()
+                    if inline_delivery:
+                        try_global_sync()
                     raise
                 try:
                     prepare(config)
                     result["publish"] = publish(config)
                 finally:
-                    result["global_sync"] = try_global_sync()
+                    if inline_delivery:
+                        result["global_sync"] = try_global_sync()
             elif args.command == "global-sync":
                 if args.limit is not None and not 1 <= args.limit <= 1000:
                     raise RuntimeError(
@@ -271,14 +306,18 @@ def main(argv=None):
                     )
                 result = deliver_global(
                     config,
-                    backfill=args.backfill,
+                    backfill=args.backfill or scheduled,
                     dry_run=args.dry_run,
                     limit=args.limit,
                     retry_blocked=args.retry_blocked,
+                    private_only=args.private_activities,
                 )
-                if not args.dry_run and (
-                    result.get("failed") or result.get("counts", {}).get("blocked")
-                ):
+                incomplete = (
+                    result.get("retryable_failures")
+                    if scheduled
+                    else result.get("failed") or result.get("counts", {}).get("blocked")
+                )
+                if not args.dry_run and incomplete:
                     raise RuntimeError(
                         "International delivery has incomplete activities; inspect status"
                     )
@@ -364,10 +403,24 @@ def main(argv=None):
             "consecutive_failures": 0,
             "result": result,
         }
+        if scheduled:
+            jobs[args.command]["mode"] = "scheduled"
         save_job(jobs[args.command])
-        print(json.dumps(result, ensure_ascii=False))
+        output = (
+            {k: v for k, v in result.items() if k not in {"entries", "failed"}}
+            if scheduled
+            else result
+        )
+        print(json.dumps(output, ensure_ascii=False))
         return 0
     except (Busy, BlockingIOError):
+        if scheduled:
+            logging.info(
+                "International delivery deferred after waiting for the data lock"
+            )
+            save_job({"last_deferred_at": utcnow()}, merge=True)
+            print(json.dumps({"deferred": "runner lock still held after 20 minutes"}))
+            return 0
         logging.info("Another operation holds the lock; skipping overlapping run")
         print(json.dumps({"skipped": "another operation is running"}))
         return 0
@@ -376,13 +429,17 @@ def main(argv=None):
         # third party auth libraries sometimes include credentials in errors.
         message = str(exc) if type(exc) is RuntimeError else type(exc).__name__
         logging.error("%s failed: %s", args.command, message)
-        previous = jobs.get(args.command, {})
+        previous = read_json(config.state / "jobs.json", {}).get(args.command, {})
         jobs[args.command] = {
             **previous,
             "last_attempt": started,
             "error": message,
             "consecutive_failures": previous.get("consecutive_failures", 0) + 1,
         }
+        if scheduled:
+            jobs[args.command]["mode"] = "scheduled"
+            if result is not None:
+                jobs[args.command]["result"] = result
         save_job(jobs[args.command])
         return 1
     finally:

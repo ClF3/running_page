@@ -47,7 +47,7 @@ def activity_zip(raw, filename="activity.fit"):
     return buffer.getvalue()
 
 
-def real_fit(*, indoor=False, hour=0):
+def real_fit(*, indoor=False, hour=0, sport="RUNNING"):
     from fit_tool.fit_file_builder import FitFileBuilder
     from fit_tool.profile.messages.record_message import RecordMessage
     from fit_tool.profile.messages.session_message import SessionMessage
@@ -58,7 +58,7 @@ def real_fit(*, indoor=False, hour=0):
     session = SessionMessage()
     session.start_time, session.timestamp = start, start + 300000
     session.total_elapsed_time, session.total_timer_time = 300, 290
-    session.total_distance, session.sport = 1100, Sport.RUNNING
+    session.total_distance, session.sport = 1100, getattr(Sport, sport)
     builder.add(session)
     if not indoor:
         for offset, lat, lon in ((0, 0.0, 0.0), (7000, 0.001, 0.001)):
@@ -295,7 +295,7 @@ class PersonalApiTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(starts, [0, 20, 40, 60])
 
     async def test_personal_key_is_preferred_over_an_existing_legacy_session(self):
-        cfg = Config(state=self.state)
+        cfg = Config(self.state / "absent-config.json", state=self.state)
         with patch.dict(
             os.environ,
             {
@@ -381,7 +381,11 @@ class PersonalPipelineTest(unittest.TestCase):
         self.source.mkdir()
         (self.source / "app.py").write_text("print('version 1')")
         seed(self.seed)
-        self.cfg = Config(source=self.source, state=self.root / "state")
+        self.cfg = Config(
+            self.root / "absent-config.json",
+            source=self.source,
+            state=self.root / "state",
+        )
         bootstrap(self.cfg, self.seed)
 
     def api_client(

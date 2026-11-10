@@ -14,6 +14,10 @@ GPX_NS = "http://www.topografix.com/GPX/1/1"
 HR_NS = "http://www.garmin.com/xmlschemas/TrackPointExtension/v1"
 
 
+class OriginalUnavailable(RuntimeError):
+    """Garmin explicitly returned no original file for this activity."""
+
+
 @dataclass(frozen=True)
 class ActivityFile:
     format: str

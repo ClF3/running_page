@@ -16,7 +16,16 @@ def run(args, **kwargs):
 
 
 def active(unit):
-    return subprocess.run([*manager(), "is-active", "--quiet", unit]).returncode == 0
+    result = subprocess.run(
+        [*manager(), "show", "-p", "ActiveState", "--value", unit],
+        capture_output=True,
+        text=True,
+    )
+    return result.returncode == 0 and result.stdout.strip() in {
+        "active",
+        "activating",
+        "deactivating",
+    }
 
 
 def manager():
@@ -86,7 +95,8 @@ def main():
         parser.error("Run via sudo ops/run upgrade")
     code_root = Path(user_root or "/opt/running-page")
     state = Path(os.getenv("RUNNING_PAGE_HOST_STATE", "/var/lib/running-page"))
-    timers = [f"running-page-{x}.timer" for x in ("update", "backup")]
+    jobs = ("update", "backup", "global-sync")
+    timers = [f"running-page-{x}.timer" for x in jobs]
     enabled = [unit for unit in timers if active(unit)]
     with (state / "upgrade.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -94,9 +104,7 @@ def main():
             run([*manager(), "stop", unit])
         try:
             deadline = time.monotonic() + 2800
-            while any(
-                active(f"running-page-{x}.service") for x in ("update", "backup")
-            ):
+            while any(active(f"running-page-{x}.service") for x in jobs):
                 if time.monotonic() > deadline:
                     raise RuntimeError("An existing operation is still running")
                 time.sleep(2)
